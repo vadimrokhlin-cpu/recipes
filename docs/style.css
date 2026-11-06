@@ -63,4 +63,5 @@ textarea { min-height: 150px; resize: vertical; }
 .card { margin-top: 12px; padding: 16px; background: #fff; border: 1px solid var(--line); border-radius: 12px; }
 .card h3 { margin-top: 0; }
 .card p { margin: 0 0 12px; }
+.warn { color: #a4262c; }
 .card .btn { display: block; width: 100%; margin-top: 8px; }

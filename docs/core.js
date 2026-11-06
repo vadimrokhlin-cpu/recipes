@@ -175,13 +175,47 @@ const Core = (() => {
     for (const r of incoming) {
       if (!validRecipe(r)) { skipped++; continue; }
       const cur = byId.get(r.id);
-      if (!cur || (r.updatedAt || 0) > (cur.updatedAt || 0)) write.push(r);
+      if (cur && cur.deleted) write.push({ ...r, updatedAt: Math.max(r.updatedAt || 0, cur.updatedAt + 1) });
+      else if (!cur || (r.updatedAt || 0) > (cur.updatedAt || 0)) write.push(r);
       else skipped++;
     }
     return { write, skipped };
   }
 
-  return { parseIngredient, parseIngredients, parseSteps, parseTags, formatQty, ingredientParts, formatIngredient, matches, validRecipe, mergeBackup };
+  // ---------- סנכרון ----------
+  // בהתנגשות מנצחת הגרסה עם updatedAt מאוחר יותר.
+  function applyRemote(local, remote) {
+    const byId = new Map(local.map(r => [r.id, r]));
+    return remote.filter(r => {
+      if (!validRecipe(r)) return false;
+      const cur = byId.get(r.id);
+      return !cur || (r.updatedAt || 0) > (cur.updatedAt || 0);
+    });
+  }
+
+  function uploadable(r) {
+    const { dirty, ...clean } = r;
+    return clean;
+  }
+
+  // מתכון שנמחק נשאר כסימון קטן, כדי שהמחיקה תגיע לכל המכשירים.
+  const tombstone = (r, now) => ({ id: r.id, title: '', ingredients: [], steps: [], deleted: true, updatedAt: now, dirty: true });
+
+  // מחלק את ההעלאה למנות, כי בקשה אחת עם הרבה תמונות יכולה להיכשל.
+  function batches(list, maxChars = 4e6, maxCount = 20) {
+    const out = [];
+    let cur = [], size = 0;
+    for (const r of list) {
+      const n = JSON.stringify(r).length;
+      if (cur.length && (size + n > maxChars || cur.length >= maxCount)) { out.push(cur); cur = []; size = 0; }
+      cur.push(r);
+      size += n;
+    }
+    if (cur.length) out.push(cur);
+    return out;
+  }
+
+  return { parseIngredient, parseIngredients, parseSteps, parseTags, formatQty, ingredientParts, formatIngredient, matches, validRecipe, mergeBackup, applyRemote, uploadable, tombstone, batches };
 })();
 
 if (typeof module !== 'undefined') module.exports = Core;

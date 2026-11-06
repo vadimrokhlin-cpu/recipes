@@ -1,4 +1,4 @@
-// אפליקציית מתכונים: מסכים ושמירה בטלפון (IndexedDB). הלוגיקה עצמה ב-core.js.
+// אפליקציית מתכונים: מסכים, שמירה בטלפון (IndexedDB) וסנכרון לדרייב. הלוגיקה עצמה ב-core.js.
 const $ = id => document.getElementById(id);
 const view = $('view');
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -28,10 +28,95 @@ async function tx(mode, work) {
   });
 }
 
-const allRecipes = () => tx('readonly', s => s.getAll());
-const getRecipe = id => tx('readonly', s => s.get(id));
-const putRecipes = list => tx('readwrite', s => list.forEach(r => s.put(r)));
-const deleteRecipe = id => tx('readwrite', s => s.delete(id));
+const allRecords = () => tx('readonly', s => s.getAll());      // כולל סימוני מחיקה
+const allRecipes = async () => (await allRecords()).filter(r => !r.deleted);
+const getRecipe = async id => {
+  const r = await tx('readonly', s => s.get(id));
+  return r && !r.deleted ? r : undefined;
+};
+const putRecords = list => tx('readwrite', s => list.forEach(r => s.put(r)));
+
+async function saveRecipes(list) {
+  await putRecords(list.map(r => ({ ...r, dirty: true })));
+  scheduleSync();
+}
+
+const deleteRecipe = r => saveRecipes([Core.tombstone(r, Date.now())]);
+
+// ---------- סנכרון לדרייב ----------
+const CFG_KEY = 'recipes-cfg', SYNC_KEY = 'recipes-sync';
+const syncState = { running: false, again: false, timer: null, error: '' };
+
+const readJson = key => { try { return JSON.parse(localStorage.getItem(key)); } catch (e) { return null; } };
+const config = () => readJson(CFG_KEY);
+const syncInfo = () => readJson(SYNC_KEY) || { since: 0, lastOk: 0 };
+
+function scheduleSync() {
+  clearTimeout(syncState.timer);
+  syncState.timer = setTimeout(sync, 1500);
+}
+
+async function postSync(cfg, body) {
+  const res = await fetch(cfg.api, { method: 'POST', body: JSON.stringify({ key: cfg.key, ...body }), signal: AbortSignal.timeout(120000) });
+  const data = await res.json();
+  if (data.error) throw new Error(data.error);
+  return data;
+}
+
+async function applyResponse(res, sent) {
+  const records = await allRecords();
+  const byId = new Map(records.map(r => [r.id, r]));
+  const clean = [];
+  for (const id of res.done) {
+    const r = byId.get(id);
+    if (r && r.dirty && r.updatedAt === sent.get(id)) { delete r.dirty; clean.push(r); }   // עריכה תוך כדי סנכרון נשארת ממתינה
+  }
+  const incoming = Core.applyRemote(records, res.changed);
+  await putRecords([...clean, ...incoming]);
+  return incoming.length;
+}
+
+async function sync() {
+  const cfg = config();
+  if (!cfg || !navigator.onLine) return;
+  if (syncState.running) { syncState.again = true; return; }
+  syncState.running = true;
+  let received = 0;
+  try {
+    const info = syncInfo();
+    const dirty = (await allRecords()).filter(r => r.dirty);
+    const parts = Core.batches(dirty);
+    if (!parts.length) parts.push([]);
+    let now = info.since;
+    for (let i = 0; i < parts.length; i++) {
+      const sent = new Map(parts[i].map(r => [r.id, r.updatedAt]));
+      const res = await postSync(cfg, { since: info.since, pull: i === parts.length - 1, changes: parts[i].map(Core.uploadable) });
+      received += await applyResponse(res, sent);
+      now = res.now;
+    }
+    localStorage.setItem(SYNC_KEY, JSON.stringify({ since: now, lastOk: Date.now() }));
+    syncState.error = '';
+  } catch (err) {
+    syncState.error = err.message;
+    console.warn('sync failed', err);
+  } finally {
+    syncState.running = false;
+  }
+  if (syncState.again) { syncState.again = false; scheduleSync(); }
+  const page = location.hash.split('/')[1];
+  if ((received && !page) || page === 'settings') route();
+}
+
+// קישור החיבור מגיע בצורה #api=...&key=... ונשמר רק בטלפון.
+async function connectFromLink() {
+  const params = new URLSearchParams(location.hash.slice(1));
+  if (!params.get('api') || !params.get('key')) return false;
+  localStorage.setItem(CFG_KEY, JSON.stringify({ api: params.get('api'), key: params.get('key') }));
+  localStorage.removeItem(SYNC_KEY);
+  history.replaceState(null, '', location.pathname);
+  await putRecords((await allRecords()).map(r => ({ ...r, dirty: true })));
+  return true;
+}
 
 // ---------- עזרים ----------
 function toast(text) {
@@ -132,7 +217,7 @@ async function showRecipe(id) {
     </div>`;
   $('del').onclick = async () => {
     if (!confirm(`למחוק את "${r.title}"? אי אפשר לבטל.`)) return;
-    await deleteRecipe(r.id);
+    await deleteRecipe(r);
     toast('המתכון נמחק');
     goHome();
   };
@@ -256,7 +341,7 @@ async function showForm(id) {
       updatedAt: now,
     };
     try {
-      await putRecipes([recipe]);
+      await saveRecipes([recipe]);
     } catch (err) {
       toast('השמירה נכשלה: ' + err.message);
       return;
@@ -270,18 +355,30 @@ async function showForm(id) {
 async function showSettings() {
   chrome('הגדרות', { back: goHome });
   const recipes = await allRecipes();
+  const pending = (await allRecords()).filter(r => r.dirty).length;
+  const cfg = config(), info = syncInfo();
+  const when = info.lastOk ? new Date(info.lastOk).toLocaleString('he-IL', { dateStyle: 'short', timeStyle: 'short' }) : 'עדיין לא';
   view.innerHTML = `
     <div class="card">
+      <h3>חשבון Google</h3>
+      ${cfg ? `
+        <p>מחובר. סנכרון אחרון: ${esc(when)}. ממתינים להעלאה: ${pending}.</p>
+        ${syncState.error ? `<p class="warn">הסנכרון האחרון נכשל: ${esc(syncState.error)}</p>` : ''}
+        <button class="btn secondary" id="syncBtn">סנכרון עכשיו</button>`
+    : '<p class="warn">לא מחובר. המתכונים שמורים רק בטלפון הזה. כדי לחבר, פותחים את קישור החיבור.</p>'}
+    </div>
+    <div class="card">
       <h3>גיבוי</h3>
-      <p>${recipes.length} מתכונים שמורים בטלפון הזה. הקובץ כולל את כל המתכונים והתמונות.</p>
+      <p>${recipes.length} מתכונים. הקובץ כולל את כל המתכונים והתמונות.</p>
       <button class="btn" id="exportBtn">ייצוא לקובץ</button>
       <button class="btn secondary" id="importBtn">ייבוא מקובץ</button>
       <input type="file" id="importFile" accept=".json,application/json" hidden>
     </div>`;
 
+  if ($('syncBtn')) $('syncBtn').onclick = () => { toast('מסנכרן...'); sync(); };
   $('exportBtn').onclick = () => {
     const date = new Date().toLocaleDateString('sv');
-    const blob = new Blob([JSON.stringify({ app: 'recipes', version: 1, recipes }, null, 1)], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify({ app: 'recipes', version: 1, recipes: recipes.map(Core.uploadable) }, null, 1)], { type: 'application/json' });
     const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: `${date}-recipes.json` });
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
@@ -295,8 +392,8 @@ async function showSettings() {
       const data = JSON.parse(await file.text());
       const incoming = Array.isArray(data) ? data : data.recipes;
       if (!Array.isArray(incoming)) throw new Error('bad file');
-      const { write, skipped } = Core.mergeBackup(await allRecipes(), incoming);
-      await putRecipes(write);
+      const { write, skipped } = Core.mergeBackup(await allRecords(), incoming);
+      await saveRecipes(write);
       toast(`נוספו או עודכנו ${write.length} מתכונים, ${skipped} דולגו`);
       showSettings();
     } catch (err) {
@@ -319,7 +416,14 @@ function route() {
 
 $('menuBtn').onclick = () => { location.hash = '#/settings'; };
 window.addEventListener('hashchange', route);
-route();
+window.addEventListener('online', sync);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) sync(); });
+
+connectFromLink().then(connected => {
+  if (connected) toast('מחובר לחשבון Google');
+  route();
+  sync();
+});
 
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js');
