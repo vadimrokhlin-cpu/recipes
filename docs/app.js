@@ -161,6 +161,15 @@ const newId = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toStri
 const collator = new Intl.Collator('he');
 
 // ---------- בית ----------
+function remindersHtml(recipes) {
+  const now = Date.now(), picks = Core.forgotten(recipes, now);
+  if (!picks.length) return '';
+  const heading = picks.some(r => r.lastCookedAt) ? 'מזמן לא הכנת' : 'אולי היום?';
+  return `<section class="reminders"><h3>${heading}</h3>${picks.map(r => `
+    <a href="#/r/${encodeURIComponent(r.id)}"><span>${esc(r.title)}</span>
+      <span class="when">${r.lastCookedAt ? esc(Core.timeAgo(r.lastCookedAt, now)) : 'עוד לא הכנת'}</span></a>`).join('')}</section>`;
+}
+
 const homeState = { query: '', tag: '' };
 
 async function showHome() {
@@ -175,6 +184,7 @@ async function showHome() {
   }
   view.innerHTML = `
     <input id="search" type="search" placeholder="חיפוש לפי שם, מצרך או תגית" autocomplete="off" value="${esc(homeState.query)}">
+    ${remindersHtml(recipes)}
     <div class="tags">${tags.map(t => `<button class="tag" data-tag="${esc(t)}">${esc(t)}</button>`).join('')}</div>
     <ul id="list"></ul>`;
 
@@ -185,6 +195,8 @@ async function showHome() {
         <div class="rowText"><div class="rowTitle">${esc(r.title)}</div><div class="meta">${esc(metaLine(r))}</div></div>
       </a></li>`).join('') : '<li class="empty">לא נמצאו מתכונים.</li>';
     view.querySelectorAll('.tag').forEach(b => b.classList.toggle('active', b.dataset.tag === homeState.tag));
+    const reminders = view.querySelector('.reminders');
+    if (reminders) reminders.hidden = !!(homeState.query.trim() || homeState.tag);
   };
   $('search').oninput = e => { homeState.query = e.target.value; paint(); };
   view.querySelector('.tags').onclick = e => {
@@ -278,7 +290,11 @@ async function showRecipe(id) {
     ${r.image ? `<img class="hero" src="${esc(r.image)}" alt="">` : ''}
     <h2>${esc(r.title)}</h2>
     <div class="meta">${esc(metaLine(r))}</div>
-    <a class="btn cookBtn" href="#/cook/${encodeURIComponent(r.id)}">התחלת בישול</a>
+    ${r.lastCookedAt ? `<div class="cookedLine">בישלת ${esc(Core.timeAgo(r.lastCookedAt, Date.now()))}${r.cookedCount > 1 ? `, ${r.cookedCount} פעמים עד היום` : ''}</div>` : ''}
+    <div class="primaryRow">
+      <a class="btn" href="#/cook/${encodeURIComponent(r.id)}">התחלת בישול</a>
+      <a class="btn secondary" href="#/shop/${encodeURIComponent(r.id)}">לקניות</a>
+    </div>
     <h3>מצרכים</h3>
     <div class="scaler" id="scaler"></div>
     <ul class="ingredients"></ul>
@@ -290,9 +306,15 @@ async function showRecipe(id) {
     <div class="actions">
       <a class="btn secondary" href="#/edit/${encodeURIComponent(r.id)}">עריכה</a>
       <button class="btn danger" id="del">מחיקה</button>
-    </div>`;
+    </div>
+    <button class="linkBtn" id="cookedToday">בישלתי היום</button>`;
   paintScaler(r);
   bindScaler(r);
+  $('cookedToday').onclick = async () => {
+    await markCooked(r);
+    toast('נשמר');
+    showRecipe(id);
+  };
   $('del').onclick = async () => {
     if (!confirm(`למחוק את "${r.title}"? אי אפשר לבטל.`)) return;
     await deleteRecipe(r);
@@ -373,6 +395,11 @@ function stopCooking() {
 
 const cookKey = id => `recipes-cook-${id}`;
 
+function markCooked(r) {
+  const now = Date.now();
+  return saveRecipes([{ ...r, lastCookedAt: now, cookedCount: (r.cookedCount || 0) + 1, updatedAt: now }]);
+}
+
 async function showCook(id) {
   const r = await getRecipe(id);
   if (!r) { goHome(); return; }
@@ -410,8 +437,7 @@ async function showCook(id) {
   };
   const finish = async () => {
     if (confirm(`בישלת את "${r.title}"?`)) {
-      const now = Date.now();
-      await saveRecipes([{ ...r, lastCookedAt: now, cookedCount: (r.cookedCount || 0) + 1, updatedAt: now }]);
+      await markCooked(r);
       toast('נשמר. בתיאבון!');
     }
     sessionStorage.removeItem(cookKey(id));
@@ -434,6 +460,100 @@ async function showCook(id) {
     if (Math.abs(dx) > 70) go(dx > 0 ? 1 : -1);
   };
   paint();
+}
+
+// ---------- שליחה לרשימת הקניות ----------
+// החיבור נקרא מאפליקציית הקניות, שיושבת באותו דומיין. לא משנים שם כלום, רק קוראים את הכתובת והמפתח.
+const STAPLES_KEY = 'recipes-staples';
+const staples = () => readJson(STAPLES_KEY) || Core.DEFAULT_STAPLES;
+const saveStaples = list => localStorage.setItem(STAPLES_KEY, JSON.stringify(list));
+const shoppingConfig = () => readJson('fs_cfg');
+const shoppingLists = () => (readJson('fs_db') || {}).lists || ['קניות'];
+const norm = s => String(s).replace(/\s+/g, ' ').trim().toLowerCase();
+
+async function showShop(id) {
+  const r = await getRecipe(id);
+  if (!r) { goHome(); return; }
+  const toRecipe = () => { location.hash = `#/r/${encodeURIComponent(id)}`; };
+  chrome('שליחה לקניות', { back: toRecipe });
+  const cfg = shoppingConfig();
+  if (!cfg) {
+    view.innerHTML = '<p class="empty">אפליקציית הקניות עוד לא מחוברת בטלפון הזה.<br>פותחים אותה פעם אחת, וחוזרים לכאן.</p>';
+    return;
+  }
+
+  const f = getFactor(id), lists = shoppingLists(), seen = new Set();
+  const rows = r.ingredients.flatMap(i => {
+    const name = Core.shoppingName(i), key = norm(name);
+    if (seen.has(key)) return [];
+    seen.add(key);
+    const scaled = Core.scaleIngredient(i, f), p = Core.ingredientParts(scaled);
+    return [{ name, amount: [p.amount, p.unit].filter(Boolean).join(' ') }];
+  });
+
+  view.innerHTML = `
+    <p class="meta">${esc(r.title)}. מה שמסומן יישלח לרשימה. מה שיש בבית, מורידים את הסימון.</p>
+    ${lists.length > 1 ? `<label>רשימה<select id="shopList">${lists.map(l => `<option${l === 'קניות' ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select></label>` : ''}
+    <div id="shopRows">${rows.map((row, n) => {
+    const home = Core.isStaple(row.name, staples());
+    return `<div class="shopRow${home ? ' off' : ''}" data-n="${n}">
+        <input type="checkbox" aria-label="לשלוח"${home ? '' : ' checked'}>
+        <input type="text" value="${esc(row.name)}" aria-label="שם המוצר">
+        <span class="shopAmount">${esc(row.amount)}</span>
+        <button type="button" class="${home ? 'on' : ''}" aria-label="תמיד יש בבית" title="תמיד יש בבית">🏠</button>
+      </div>`;
+  }).join('')}</div>
+    <p class="hint">🏠 = תמיד יש בבית. בפעם הבאה המוצר לא יסומן.</p>
+    <div class="actions"><button class="btn" id="send"></button></div>`;
+
+  const boxes = () => [...view.querySelectorAll('.shopRow')];
+  const paintCount = () => {
+    const count = boxes().filter(b => b.querySelector('[type=checkbox]').checked && b.querySelector('[type=text]').value.trim()).length;
+    $('send').textContent = `שליחת ${count} מוצרים`;
+    $('send').disabled = !count;
+  };
+  $('shopRows').onchange = e => {
+    if (e.target.type === 'checkbox') e.target.closest('.shopRow').classList.toggle('off', !e.target.checked);
+    paintCount();
+  };
+  $('shopRows').oninput = paintCount;
+  $('shopRows').onclick = e => {
+    const btn = e.target.closest('button');
+    if (!btn) return;
+    const row = btn.closest('.shopRow'), name = row.querySelector('[type=text]').value.trim();
+    const on = !btn.classList.contains('on');
+    btn.classList.toggle('on', on);
+    saveStaples(on ? [...new Set([...staples(), name])] : staples().filter(s => !Core.isStaple(name, [s])));
+    const box = row.querySelector('[type=checkbox]');
+    box.checked = !on;
+    row.classList.toggle('off', on);
+    paintCount();
+  };
+  paintCount();
+
+  $('send').onclick = async () => {
+    const list = $('shopList') ? $('shopList').value : lists[0];
+    const names = [...new Set(boxes()
+      .filter(b => b.querySelector('[type=checkbox]').checked)
+      .map(b => b.querySelector('[type=text]').value.replace(/\s+/g, ' ').trim())
+      .filter(Boolean))];
+    const ops = names.map(name => ({
+      type: 'upsert', id: 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
+      list, name, checked: false, base: 0,
+    }));
+    $('send').disabled = true;
+    $('send').textContent = 'שולח...';
+    try {
+      const res = await fetch(cfg.api, { method: 'POST', body: JSON.stringify({ key: cfg.key, ops }), signal: AbortSignal.timeout(60000) });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      toast(`נשלחו ${ops.length} מוצרים לרשימה "${list}"`);
+      toRecipe();
+    } catch (err) {
+      toast('השליחה נכשלה. בדוק שיש אינטרנט ונסה שוב.');
+      paintCount();
+    }
+  };
 }
 
 // ---------- הוספה ועריכה ----------
@@ -581,6 +701,11 @@ async function showSettings() {
     : '<p class="warn">לא מחובר. המתכונים שמורים רק בטלפון הזה. כדי לחבר, פותחים את קישור החיבור.</p>'}
     </div>
     <div class="card">
+      <h3>תמיד יש בבית</h3>
+      <p>מוצרים שלא יסומנו אוטומטית בשליחה לקניות. מופרדים בפסיק.</p>
+      <textarea id="staples" aria-label="תמיד יש בבית">${esc(staples().join(', '))}</textarea>
+    </div>
+    <div class="card">
       <h3>גיבוי</h3>
       <p>${recipes.length} מתכונים. הקובץ כולל את כל המתכונים והתמונות.</p>
       <button class="btn" id="exportBtn">ייצוא לקובץ</button>
@@ -589,6 +714,7 @@ async function showSettings() {
     </div>`;
 
   if ($('syncBtn')) $('syncBtn').onclick = () => { toast('מסנכרן...'); sync(); };
+  $('staples').onchange = e => saveStaples(Core.parseTags(e.target.value));
   $('exportBtn').onclick = () => {
     const date = new Date().toLocaleDateString('sv');
     const blob = new Blob([JSON.stringify({ app: 'recipes', version: 1, recipes: recipes.map(Core.uploadable) }, null, 1)], { type: 'application/json' });
@@ -623,6 +749,7 @@ function route() {
   view.onchange = view.ontouchstart = view.ontouchend = null;
   const done = page === 'r' ? showRecipe(param)
     : page === 'cook' ? showCook(param)
+      : page === 'shop' ? showShop(param)
       : page === 'new' ? showForm(null)
         : page === 'edit' ? showForm(param)
           : page === 'settings' ? showSettings()

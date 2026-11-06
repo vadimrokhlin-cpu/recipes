@@ -151,6 +151,50 @@ assert.strictEqual(C.formatClock(3725), '1:02:05');
 assert.strictEqual(C.formatClock(0), '0:00');
 assert.strictEqual(C.formatClock(59.2), '1:00');
 
+function shop(line, s) { n++; assert.strictEqual(C.shoppingName(C.parseIngredient(line)), s, line); }
+shop('2 כוסות קמח', 'קמח');
+shop('2 כפות שמן זית איכותי', 'שמן זית');
+shop('1 בצל, קצוץ', 'בצל');
+shop('מלח לפי הטעם', 'מלח');
+shop('חצי כוס (120 מ"ל) מים רותחים', 'מים');
+shop('150 גרם (1 1/2 כוסות) שיבולת שועל', 'שיבולת שועל');
+shop('3 כפות אבקת פסיליום', 'קליפות פסיליום');
+shop('50 גרם קליפות פסיליום', 'קליפות פסיליום');
+shop('1 כף אלולוז (למילוי)', 'אלולוז');
+shop('חופן אגוזי פקאן', 'אגוזי פקאן');
+shop('2 תפוחים ירוקים גדולים', 'תפוחים ירוקים');
+shop('1 כוס חלב קר', 'חלב');
+shop('100 גרם שוקולד מריר', 'שוקולד מריר');
+shop('200 גרם חמאה רכה', 'חמאה');
+shop('חם', 'חם');
+shop('2 כפות קקאו לציפוי', 'קקאו');
+
+n += 6;
+assert.ok(C.isStaple('מלח אטלנטי', ['מלח']));
+assert.ok(C.isStaple('מים', ['מלח', 'מים']));
+assert.ok(!C.isStaple('מלחייה', ['מלח']));
+assert.ok(!C.isStaple('שמן זית', ['מלח']));
+assert.ok(C.isStaple('פלפל שחור גרוס', ['פלפל שחור']));
+assert.ok(!C.isStaple('פלפל אדום', ['פלפל שחור']));
+
+const DAY = 864e5, NOW = 2e12;
+const rr = (id, lastCookedAt, tags = []) => ({ id, title: id, tags, lastCookedAt });
+n += 8;
+const picks = (list, c) => C.forgotten(list, NOW, c).map(x => x.id);
+assert.deepStrictEqual(picks([rr('a', NOW - 90 * DAY), rr('b', null)]), ['a', 'b']);
+assert.deepStrictEqual(picks([rr('a', NOW - 10 * DAY)]), [], 'recent is not forgotten');
+assert.deepStrictEqual(picks([rr('a', null, ['לבדיקה'])]), [], 'incomplete not suggested');
+assert.deepStrictEqual(picks([{ ...rr('a', null), deleted: true }]), []);
+assert.strictEqual(picks([rr('a', null), rr('b', null), rr('c', null)]).length, 2);
+assert.deepStrictEqual(picks([]), []);
+const many = Array.from({ length: 30 }, (_, i) => rr('r' + i, null));
+assert.deepStrictEqual(C.forgotten(many, NOW).map(x => x.id), C.forgotten(many, NOW + 1000).map(x => x.id), 'stable within a day');
+assert.notDeepStrictEqual(C.forgotten(many, NOW).map(x => x.id), C.forgotten(many, NOW + 5 * DAY).map(x => x.id), 'changes between days');
+
+function ago(days, s) { n++; assert.strictEqual(C.timeAgo(NOW - days * DAY, NOW), s); }
+ago(0, 'היום'); ago(1, 'אתמול'); ago(2, 'לפני יומיים'); ago(5, 'לפני 5 ימים'); ago(8, 'לפני שבוע'); ago(15, 'לפני שבועיים');
+ago(25, 'לפני 3 שבועות'); ago(40, 'לפני חודש'); ago(65, 'לפני חודשיים'); ago(100, 'לפני 3 חודשים'); ago(370, 'לפני שנה'); ago(800, 'לפני שנתיים'); ago(1200, 'לפני 3 שנים');
+
 function fmt(q, s) { n++; assert.strictEqual(C.formatQty(q), s); }
 fmt(1, '1'); fmt(2, '2'); fmt(0.5, '½'); fmt(1.5, '1½'); fmt(1 / 3, '⅓'); fmt(0.75, '¾');
 fmt(2.999, '3'); fmt(0.37, '0.37'); fmt(137.4, '137'); fmt(0.25, '¼');

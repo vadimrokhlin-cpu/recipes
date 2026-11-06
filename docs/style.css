@@ -63,6 +63,26 @@ a.cookBtn { display: block; margin-top: 20px; font-size: 19px; }
 body.hasTimers main { padding-bottom: 170px; }
 body.hasTimers #addBtn { bottom: calc(76px + env(safe-area-inset-bottom)); }
 
+.reminders { margin: 10px 0 2px; padding: 10px 12px; background: #f4eee6; border-radius: 12px; }
+.reminders h3 { margin: 0 0 4px; font-size: 16px; }
+.reminders a { display: flex; justify-content: space-between; gap: 10px; padding: 5px 0; color: inherit; text-decoration: none; }
+.reminders .when { flex: none; color: var(--muted); font-size: 14px; }
+.cookedLine { color: var(--muted); font-size: 15px; margin-top: 2px; }
+.primaryRow { display: flex; gap: 8px; margin-top: 20px; }
+.primaryRow .btn { flex: 1; font-size: 18px; }
+.linkBtn { display: block; margin: 16px auto 0; border: 0; background: none; color: var(--accent); font: inherit; font-size: 16px; padding: 8px; }
+
+/* שליחה לקניות */
+.shopRow { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.shopRow input[type=checkbox] { width: 26px; height: 26px; flex: none; accent-color: var(--accent); }
+.shopRow input[type=text] { flex: 1; min-width: 0; margin: 0; padding: 8px; }
+.shopRow button { flex: none; width: 40px; height: 40px; border: 0; border-radius: 8px; background: none; font-size: 20px; opacity: .35; }
+.shopRow button.on { opacity: 1; background: #f4eee6; }
+.shopRow.off input[type=text] { color: var(--muted); }
+.shopAmount { color: var(--muted); font-size: 14px; flex: none; max-width: 30%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+select { display: block; width: 100%; margin-top: 4px; padding: 11px; font: inherit; color: inherit; background: #fff; border: 1px solid var(--line); border-radius: 10px; }
+.card textarea { min-height: 70px; }
+
 /* מצב בישול */
 main.cooking { display: flex; flex-direction: column; min-height: calc(100dvh - 56px); padding-bottom: 12px; }
 .cookText { flex: 1; font-size: 27px; line-height: 1.4; padding: 10px 2px 18px; }

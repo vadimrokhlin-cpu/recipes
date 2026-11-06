@@ -257,6 +257,64 @@ const Core = (() => {
     return h ? `${h}:${two(m)}:${two(r)}` : `${m}:${two(r)}`;
   }
 
+  // ---------- רשימת קניות ----------
+  const TAIL_WORDS = /^(קצו[צץ]\S*|מגורד\S*|מנופ\S*|פרוס\S*|טחו[נן]\S*|מומס\S*|מופשר\S*|שטופ\S*|קלופ\S*|מסונ\S*|חתוכ\S*|רותח\S*|חמימ\S*|חמים|חם|חמה|קר|קרה|קרים|קרות|רך|רכה|רכים|רכות|טבעי|טבעית|טבעיים|טהור|טהורה|איכותי|איכותית|אמיתי|אמיתית|טרי|טריה|טרייה|טריים|בשל|בשלה|בשלים|בשלות|בשלות|גדול|גדולה|גדולים|גדולות|קטן|קטנה|קטנים|קטנות|בינוני|בינונית|בינוניים|בינוניות)$/;
+  const CUT_FROM = new Set(['לפי', 'לציפוי', 'לקישוט', 'למילוי', 'לבצק', 'לזיגוג', 'למריחה', 'לשימון', 'להמסה', 'לסחיטת']);
+
+  // שם מוצר נקי לרשימת הקניות: בלי כמות, הכנה ואיכות, כדי שיתחבר להיסטוריה של הרשימה.
+  function shoppingName(ing) {
+    if (/פסיליו/.test(ing.item)) return 'קליפות פסיליום';   // תמיד קליפות, גם כשהמתכון אומר אבקה
+    const tokens = ing.item.replace(/\([^)]*\)/g, ' ').replace(/[,:].*$/, ' ').split(/\s+/).filter(Boolean);
+    const cut = tokens.findIndex((t, n) => n > 0 && CUT_FROM.has(t));
+    const kept = cut > 0 ? tokens.slice(0, cut) : tokens;
+    while (kept.length > 1 && TAIL_WORDS.test(kept[kept.length - 1])) kept.pop();
+    return kept.join(' ');
+  }
+
+  const DEFAULT_STAPLES = ['מים', 'מלח', 'פלפל שחור'];
+
+  // "מלח" תופס גם "מלח אטלנטי", אבל לא מוצר שרק מכיל את האותיות.
+  const isStaple = (name, staples) => staples.some(s => s && hasWord(name, s));
+
+  // ---------- מזמן לא הכנת ----------
+  const DAY = 24 * 60 * 60 * 1000;
+  const FORGOTTEN_AFTER_DAYS = 60;
+
+  const seededOrder = (id, seed) => {
+    let h = seed;
+    for (const c of id) h = (h * 31 + c.charCodeAt(0)) % 2147483647;
+    return (h * 16807) % 2147483647;
+  };
+
+  // בוחר מתכונים להזכיר. קודם מה שבושל ונשכח, אחר כך מה שעוד לא בושל. מתחלף כל יום.
+  function forgotten(recipes, now, count = 2) {
+    const today = Math.floor(now / DAY);
+    const pool = recipes.filter(r => !r.deleted && !(r.tags || []).includes('לבדיקה'));
+    const old = pool.filter(r => r.lastCookedAt && now - r.lastCookedAt >= FORGOTTEN_AFTER_DAYS * DAY);
+    const never = pool.filter(r => !r.lastCookedAt);
+    const shuffled = list => [...list].sort((a, b) => seededOrder(a.id, today) - seededOrder(b.id, today));
+    return [...shuffled(old), ...shuffled(never)].slice(0, count);
+  }
+
+  function timeAgo(then, now) {
+    const days = Math.floor((now - then) / DAY);
+    if (days < 1) return 'היום';
+    if (days === 1) return 'אתמול';
+    if (days === 2) return 'לפני יומיים';
+    if (days < 7) return `לפני ${days} ימים`;
+    if (days < 14) return 'לפני שבוע';
+    if (days < 21) return 'לפני שבועיים';
+    if (days < 30) return `לפני ${Math.floor(days / 7)} שבועות`;
+    const months = Math.floor(days / 30.44);
+    if (months <= 1) return 'לפני חודש';
+    if (months === 2) return 'לפני חודשיים';
+    if (months < 12) return `לפני ${months} חודשים`;
+    const years = Math.floor(days / 365.25);
+    if (years <= 1) return 'לפני שנה';
+    if (years === 2) return 'לפני שנתיים';
+    return `לפני ${years} שנים`;
+  }
+
   const parseLines = text => String(text).split('\n').map(s => s.trim()).filter(Boolean);
 
   // ---------- פיצול טקסט חופשי למצרכים ----------
@@ -375,7 +433,7 @@ const Core = (() => {
     return out;
   }
 
-  return { parseIngredient, parseIngredients, parseSteps, parseTags, formatQty, ingredientParts, formatIngredient, matches, validRecipe, mergeBackup, applyRemote, uploadable, tombstone, batches, scaleIngredient, scaleStep, stepIngredients, findTimers, formatClock };
+  return { parseIngredient, parseIngredients, parseSteps, parseTags, formatQty, ingredientParts, formatIngredient, matches, validRecipe, mergeBackup, applyRemote, uploadable, tombstone, batches, scaleIngredient, scaleStep, stepIngredients, findTimers, formatClock, shoppingName, DEFAULT_STAPLES, isStaple, forgotten, timeAgo };
 })();
 
 if (typeof module !== 'undefined') module.exports = Core;
