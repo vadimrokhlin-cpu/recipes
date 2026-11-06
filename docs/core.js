@@ -149,7 +149,58 @@ const Core = (() => {
   }
 
   const parseLines = text => String(text).split('\n').map(s => s.trim()).filter(Boolean);
-  const parseIngredients = text => parseLines(text).map(parseIngredient);
+
+  // ---------- פיצול טקסט חופשי למצרכים ----------
+  // מפרידים לפי שורה, לפי פסיק, ובשורה רצופה (הכתבה) גם לפי תחילת כמות חדשה.
+  const COMMA = /(?<!\d),|,(?!\d)|[;،]/;                  // "1,5" הוא מספר, לא הפרדה
+  const PREPARED = /^(קצו[צץ]|מגורד|מנופ|פרוס|טחו[נן]|מומס|רך$|רכה$|רכים$|רכות$|חתו[כך]|קלו[פף]|מבושל|מרוסק|כתוש|טרי|קר$|קרה$|קרים$|חם$|חמה$|חמים$|גדול|קטנ|קטן|בינונ)/;
+  const NEVER_AFTER = new Set(['או', 'עד', 'עם', 'של', 'לפי', 'בערך', 'כמו', 'בלי', 'מתוך']);
+  const ONE_WORDS = new Set(['אחד', 'אחת']);              // "2 תפוחים אחד גדול" הוא לא מצרך חדש
+
+  // האם במקום j מתחיל מצרך חדש? מחזיר את המילה לשימוש (בלי ו' החיבור), או null.
+  function startAt(tokens, j) {
+    if (NEVER_AFTER.has(tokens[j - 1]) || ONE_WORDS.has(tokens[j])) return null;
+    if (parseAtom(tokens[j - 1]) && NEVER_AFTER.has(tokens[j - 2])) return null;   // "או 1 כף חמאה"
+    const words = tokens[j].length > 1 && tokens[j][0] === 'ו' ? [tokens[j], tokens[j].slice(1)] : [tokens[j]];
+    for (const word of words) {
+      const probe = [...tokens];
+      probe[j] = word;
+      const m = readMeasure(probe, j);
+      if (m && m.qty > 0 && m.next < tokens.length) return word;
+    }
+    return null;
+  }
+
+  function splitRun(piece) {
+    const tokens = clean(piece).split(' ');
+    if (!readMeasure(tokens, 0)) return [piece];            // שורה שלא מתחילה בכמות נשארת כמו שהיא
+    const out = [];
+    let start = 0;
+    while (start < tokens.length) {
+      const first = readMeasure(tokens, start);
+      let j = (first ? first.next : start) + 1;             // לפחות מילה אחת של שם המצרך
+      while (j < tokens.length && !startAt(tokens, j)) j++;
+      if (j < tokens.length) tokens[j] = startAt(tokens, j);
+      out.push(tokens.slice(start, j).join(' '));
+      start = j;
+    }
+    return out;
+  }
+
+  function splitIngredients(text) {
+    const out = [];
+    for (const line of parseLines(text)) {
+      const pieces = [];
+      for (const part of line.split(COMMA).map(s => s.trim()).filter(Boolean)) {
+        if (pieces.length && PREPARED.test(part)) pieces[pieces.length - 1] += ', ' + part;
+        else pieces.push(part);
+      }
+      pieces.forEach(p => out.push(...splitRun(p)));
+    }
+    return out;
+  }
+
+  const parseIngredients = text => splitIngredients(text).map(parseIngredient);
   const parseSteps = text => parseLines(text).map(s => s.replace(/^\d+\s*[.)-]\s*/, '')).filter(Boolean);
   const parseTags = text => [...new Set(String(text).split(/[,،\n]/).map(s => s.trim()).filter(Boolean))];
 

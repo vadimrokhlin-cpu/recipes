@@ -287,7 +287,7 @@ async function showForm(id) {
         <label>זמן (דקות)<input type="number" name="minutes" min="1" inputmode="numeric" value="${esc(f.minutes)}"></label>
       </div>
       <label>תגיות <small>(מופרדות בפסיק)</small><input type="text" name="tags" value="${esc(f.tags)}"></label>
-      <label>מצרכים <small>(כל מצרך בשורה)</small><textarea name="ingredients" required>${esc(f.ingredients)}</textarea></label>
+      <label>מצרכים <small>(בשורות, בפסיקים או ברצף)</small><textarea name="ingredients" required>${esc(f.ingredients)}</textarea></label>
       <ul class="parsed" id="parsed"></ul>
       <label>שלבי הכנה <small>(כל שלב בשורה)</small><textarea name="steps" required>${esc(f.steps)}</textarea></label>
       <label>הערות <small>(לא חובה)</small><textarea name="notes" style="min-height:80px">${esc(f.notes)}</textarea></label>
