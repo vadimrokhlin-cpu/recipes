@@ -195,6 +195,52 @@ function ago(days, s) { n++; assert.strictEqual(C.timeAgo(NOW - days * DAY, NOW)
 ago(0, 'היום'); ago(1, 'אתמול'); ago(2, 'לפני יומיים'); ago(5, 'לפני 5 ימים'); ago(8, 'לפני שבוע'); ago(15, 'לפני שבועיים');
 ago(25, 'לפני 3 שבועות'); ago(40, 'לפני חודש'); ago(65, 'לפני חודשיים'); ago(100, 'לפני 3 חודשים'); ago(370, 'לפני שנה'); ago(800, 'לפני שנתיים'); ago(1200, 'לפני 3 שנים');
 
+split('150 גרם (1 1/2 כוסות) שיבולת שועל', ['150 גרם (1 1/2 כוסות) שיבולת שועל']);
+split('1/2 כוס טחינה (רצוי טחינה מלאה, נוזלית וחלקה)', ['½ כוס טחינה (רצוי טחינה מלאה, נוזלית וחלקה)']);
+split('3 כוסות (720 מ"ל) מים חמימים', ['3 כוסות (720 מ"ל) מים חמימים']);
+split('1/3 כוס שמן קוקוס, או שמן זית עדין', ['⅓ כוס שמן קוקוס, או שמן זית עדין']);
+split('2 כוסות קמח (מנופה), כוס סוכר', ['2 כוסות קמח (מנופה)', '1 כוס סוכר']);
+
+const nadav = `<html><head><title>x</title><meta property="og:title" content="ממרח חלווה-פרג אקספרס (ללא בישול) - נדב דהן"><script>var a="<li>לא</li>"</script></head><body>
+<ul><li>תפריט</li></ul><p>סיפור על המתכון, עם מצרכים טובים</p>
+<p class="paragraph"><b>מרכיבים:</b></p><ul><li>1/2 כוס טחינה גולמית</li><li>קורט מלח &amp; פלפל</li></ul>
+<p class="paragraph"><b>לציפוי:</b></p><ul><li>3 כפות אבקת פסיליום</li></ul>
+<p class="paragraph"><b>הוראות הכנה:</b></p><ol><li><b>הערבוב:</b> בקערה קטנה שמים הכל 10 דקות.</li><li>מערבבים את אבקת הפסיליום.</li></ol>
+<p><b>הערות:</b></p><ul><li><b>אחסון:</b> במקרר.</li></ul>
+<p><b>ערכים תזונתיים:</b></p><ul><li>חלבון 3</li></ul><ul><li>פוטר</li></ul></body></html>`;
+const pn = C.parseRecipeHtml(nadav);
+n += 5;
+assert.strictEqual(pn.title, 'ממרח חלווה-פרג אקספרס (ללא בישול)');
+assert.deepStrictEqual(pn.ingredients, ['1/2 כוס טחינה גולמית', 'קורט מלח & פלפל', '3 כפות קליפות פסיליום']);
+assert.deepStrictEqual(pn.steps, ['הערבוב: בקערה קטנה שמים הכל 10 דקות.', 'מערבבים את קליפות הפסיליום.']);
+assert.strictEqual(pn.notes[0], 'אחסון: במקרר.');
+assert.ok(pn.notes[1].includes('אבקת פסיליום'));
+
+const omer = `<title>חלב מרוכז - עומר מילר</title><meta property="og:description" content="מצרכים 1 ליטר"><h2>חלב מרוכז</h2><h2>מצרכים</h2><ul><li>1 ליטר שמנת 38%</li></ul><h2>שלבים</h2><ol><li>יוצקים למחבת.</li></ol><p>&nbsp;</p><p>סוף הפוסט</p><ul><li>קישור אחר</li></ul>`;
+const po = C.parseRecipeHtml(omer);
+n += 3;
+assert.strictEqual(po.title, 'חלב מרוכז');
+assert.deepStrictEqual(po.ingredients, ['1 ליטר שמנת 38%']);
+assert.deepStrictEqual(po.steps, ['יוצקים למחבת.']);
+
+n++; assert.deepStrictEqual(C.parseRecipeHtml('<p>סתם דף</p><ul><li>א</li></ul>').ingredients, []);
+
+split('1 כף פלפל ארבע עונות', ['1 כף פלפל ארבע עונות']);
+const tofu = C.parseRecipeHtml('<p><b>מרכיבים:</b> <b>לבסיס: </b>(כ-4 מנות)</p><ul><li>1 חבילה טופו</li><li>הערה: אפשר גם אחר</li></ul><p><b>הוראות הכנה:</b></p><ol><li>אופים.</li><li>למתכון נוסף לחצו פה.</li></ol>');
+n += 3;
+assert.deepStrictEqual(tofu.ingredients, ['1 חבילה טופו']);
+assert.deepStrictEqual(tofu.notes, ['הערה: אפשר גם אחר']);
+assert.deepStrictEqual(tofu.steps, ['אופים.']);
+n++; assert.deepStrictEqual(C.parseRecipeHtml('<h2>מצרכים</h2><ul><li>תפריט</li><li>איפוס</li></ul>').ingredients, [], 'no steps means not a recipe');
+
+const pasted = 'עוגת גזר\nמתכון מעולה!\n\nמצרכים:\n- 2 כוסות קמח\n• 3 גזרים\n\nאופן ההכנה:\n1. מערבבים\n2. אופים 40 דקות\n';
+const pt = C.parseRecipeText(pasted);
+n += 3;
+assert.strictEqual(pt.title, 'עוגת גזר');
+assert.deepStrictEqual(pt.ingredients, ['2 כוסות קמח', '3 גזרים']);
+assert.deepStrictEqual(C.parseSteps(pt.steps.join('\n')), ['מערבבים', 'אופים 40 דקות']);
+n++; assert.deepStrictEqual(C.parseRecipeText('רק טקסט בלי כותרות').ingredients, []);
+
 function fmt(q, s) { n++; assert.strictEqual(C.formatQty(q), s); }
 fmt(1, '1'); fmt(2, '2'); fmt(0.5, '½'); fmt(1.5, '1½'); fmt(1 / 3, '⅓'); fmt(0.75, '¾');
 fmt(2.999, '3'); fmt(0.37, '0.37'); fmt(137.4, '137'); fmt(0.25, '¼');

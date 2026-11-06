@@ -72,6 +72,11 @@ body.hasTimers #addBtn { bottom: calc(76px + env(safe-area-inset-bottom)); }
 .primaryRow .btn { flex: 1; font-size: 18px; }
 .linkBtn { display: block; margin: 16px auto 0; border: 0; background: none; color: var(--accent); font: inherit; font-size: 16px; padding: 8px; }
 
+.importLink { display: block; margin: 0 0 4px; color: var(--accent); font-size: 16px; }
+.importCard h3 { margin-bottom: 4px; }
+.importCard input, .importCard textarea { margin-bottom: 8px; }
+.importCard textarea { min-height: 140px; }
+
 /* שליחה לקניות */
 .shopRow { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line); }
 .shopRow input[type=checkbox] { width: 26px; height: 26px; flex: none; accent-color: var(--accent); }

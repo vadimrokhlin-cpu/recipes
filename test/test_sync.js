@@ -20,6 +20,7 @@ const folder = {
   createFile(name, text) { const f = fakeFile(name, text); files.push(f); return f; },
 };
 const props = { KEY: 'secret', FOLDER_ID: 'folder' };
+const fetched = [];
 const sandbox = {
   Date: class extends Date { static now() { return clock; } },
   JSON, Object,
@@ -27,8 +28,19 @@ const sandbox = {
   LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
   DriveApp: { getFolderById: () => folder, createFolder: () => ({ getId: () => 'folder' }) },
   ContentService: { MimeType: { JSON: 'json' }, createTextOutput: t => ({ setMimeType: () => t }) },
-  Utilities: { getUuid: () => 'u-u' },
+  Utilities: { getUuid: () => 'u-u', base64Encode: () => 'QUJD' },
   Logger: { log() {} },
+  UrlFetchApp: {
+    fetch(url) {
+      fetched.push(url);
+      const page = '<meta property="og:image" content="https://x.test/a.jpg"><h2>מצרכים</h2>';
+      return {
+        getResponseCode: () => (url.includes('blocked') ? 403 : 200),
+        getContentText: () => page,
+        getBlob: () => ({ getBytes: () => [1, 2], getContentType: () => 'image/jpeg' }),
+      };
+    },
+  },
 };
 vm.createContext(sandbox);
 vm.runInContext(fs.readFileSync(path.join(__dirname, '../apps-script/Code.gs'), 'utf8'), sandbox);
@@ -116,6 +128,15 @@ assert.ok(Core.applyRemote([{ ...r, updatedAt: 9e12 }], [r]).length === 0, 'olde
 const before = files.length;
 call({ key: 'secret', changes: [{ id: '../x', updatedAt: 1 }] });
 assert.strictEqual(files.length, before);
+
+// הבאת דף: רק עם מפתח, ורק כתובות אינטרנט
+assert.ok(call({ key: 'wrong', fetchUrl: 'https://x.test/r' }).error);
+assert.strictEqual(fetched.length, 0, 'no fetch without key');
+assert.strictEqual(call({ key: 'secret', fetchUrl: 'file:///etc/passwd' }).fetchError, 'bad url');
+assert.strictEqual(call({ key: 'secret', fetchUrl: 'https://x.test/blocked' }).fetchError, 'http 403');
+const page = call({ key: 'secret', fetchUrl: 'https://x.test/r' });
+assert.ok(page.html.includes('מצרכים'));
+assert.strictEqual(page.image, 'data:image/jpeg;base64,QUJD');
 
 // מכשיר חדש מקבל הכל, כולל סימוני מחיקה
 const fresh = new Device();

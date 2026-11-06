@@ -462,6 +462,81 @@ async function showCook(id) {
   paint();
 }
 
+// ---------- ייבוא מקישור או מטקסט ----------
+// התוצאה נכנסת לטופס רגיל כטיוטה, כדי שאפשר יהיה לבדוק ולתקן לפני השמירה.
+function openDraft(parsed, source, image) {
+  const draft = {
+    title: parsed.title, ingredients: parsed.ingredients.join('\n'), steps: parsed.steps.join('\n'),
+    notes: parsed.notes.join('\n'), source: source || '', image: image || '',
+  };
+  localStorage.setItem(draftKey(null), JSON.stringify(draft));
+  location.hash = '#/new';
+}
+
+async function pageImage(dataUrl) {
+  if (!dataUrl) return '';
+  try {
+    return await resizeImage(await (await fetch(dataUrl)).blob());
+  } catch (e) {
+    return '';     // מתכון בלי תמונה עדיף על ייבוא שנכשל
+  }
+}
+
+async function showImport() {
+  chrome('ייבוא מתכון', { back: () => { location.hash = '#/new'; } });
+  const cfg = config();
+  view.innerHTML = `
+    <div class="card importCard">
+      <h3>מקישור</h3>
+      ${cfg ? `<input type="url" id="importUrl" dir="ltr" placeholder="https://..." autocomplete="off">
+      <button class="btn" id="fetchBtn">הבאת המתכון</button>` : '<p class="warn">צריך קודם לחבר את חשבון Google.</p>'}
+    </div>
+    <div class="card importCard">
+      <h3>הדבקת טקסט</h3>
+      <p>מתאים לפייסבוק ואינסטגרם. עדיף שהטקסט יכלול כותרות כמו "מצרכים" ו"אופן ההכנה".</p>
+      <textarea id="importText" aria-label="טקסט המתכון"></textarea>
+      <button class="btn secondary" id="pasteBtn">המשך</button>
+    </div>`;
+
+  if (cfg) {
+    $('fetchBtn').onclick = async () => {
+      const url = $('importUrl').value.trim();
+      if (!/^https?:\/\//i.test(url)) { toast('צריך קישור מלא שמתחיל ב-https'); return; }
+      $('fetchBtn').disabled = true;
+      $('fetchBtn').textContent = 'מביא...';
+      try {
+        const res = await postSync(cfg, { fetchUrl: url });
+        if (res.fetchError) throw new Error('blocked');
+        if (!res.html) throw new Error('old server');
+        const parsed = Core.parseRecipeHtml(res.html);
+        if (!parsed.ingredients.length) throw new Error('not found');
+        openDraft(parsed, url, await pageImage(res.image));
+        return;
+      } catch (err) {
+        const message = {
+          blocked: 'האתר חסם את הגישה. אפשר להעתיק את הטקסט ולהדביק למטה.',
+          'old server': 'צריך לעדכן קודם את הסקריפט ב-Google.',
+          'not found': 'לא מצאתי מתכון בדף. אפשר להעתיק את הטקסט ולהדביק למטה.',
+        }[err.message] || 'הייבוא נכשל. בדוק שיש אינטרנט ונסה שוב.';
+        toast(message);
+      }
+      $('fetchBtn').disabled = false;
+      $('fetchBtn').textContent = 'הבאת המתכון';
+    };
+  }
+  $('pasteBtn').onclick = () => {
+    const text = $('importText').value;
+    if (!text.trim()) { toast('אין טקסט'); return; }
+    const parsed = Core.parseRecipeText(text);
+    if (!parsed.ingredients.length) {
+      toast('לא זיהיתי כותרות, אז כל הטקסט נכנס לשלבים. כדאי לסדר לפני השמירה.');
+      openDraft({ title: '', ingredients: [], steps: text.split('\n').filter(l => l.trim()), notes: [] });
+      return;
+    }
+    openDraft(parsed);
+  };
+}
+
 // ---------- שליחה לרשימת הקניות ----------
 // החיבור נקרא מאפליקציית הקניות, שיושבת באותו דומיין. לא משנים שם כלום, רק קוראים את הכתובת והמפתח.
 const STAPLES_KEY = 'recipes-staples';
@@ -593,7 +668,7 @@ async function showForm(id) {
   let draft = null;
   try { draft = JSON.parse(localStorage.getItem(key)); } catch (e) { /* טיוטה פגומה: מתעלמים */ }
   const f = { ...start, ...(draft || {}) };
-  let image = existing ? existing.image || '' : '';
+  let image = (draft && draft.image) || (existing ? existing.image || '' : '');
 
   const leave = () => {
     localStorage.removeItem(key);
@@ -606,6 +681,7 @@ async function showForm(id) {
 
   view.innerHTML = `
     <form id="form" autocomplete="off">
+      ${existing ? '' : '<a class="importLink" href="#/import">ייבוא מקישור או הדבקת טקסט</a>'}
       <label>שם המתכון<input type="text" name="title" required value="${esc(f.title)}"></label>
       <label>תמונה <small>(לא חובה)</small>
         <div class="imageRow">
@@ -631,7 +707,8 @@ async function showForm(id) {
   const form = $('form');
   const values = () => Object.fromEntries(new FormData(form).entries());
   const startJson = JSON.stringify(start);
-  const startImage = image;
+  const startImage = existing ? existing.image || '' : '';
+  const saveDraft = () => localStorage.setItem(key, JSON.stringify({ ...values(), image }));
   function isDirty() { return JSON.stringify({ ...start, ...values() }) !== startJson || image !== startImage; }
 
   const paintImage = () => {
@@ -645,15 +722,15 @@ async function showForm(id) {
 
   form.addEventListener('input', () => {
     paintParsed();
-    localStorage.setItem(key, JSON.stringify(values()));
+    saveDraft();
   });
   $('pick').onclick = () => $('file').click();
-  $('clearImg').onclick = () => { image = ''; paintImage(); };
+  $('clearImg').onclick = () => { image = ''; paintImage(); saveDraft(); };
   $('file').onchange = async e => {
     const file = e.target.files[0];
     e.target.value = '';
     if (!file) return;
-    try { image = await resizeImage(file); paintImage(); } catch (err) { toast('לא הצלחתי לפתוח את התמונה'); }
+    try { image = await resizeImage(file); paintImage(); saveDraft(); } catch (err) { toast('לא הצלחתי לפתוח את התמונה'); }
   };
 
   form.onsubmit = async e => {
@@ -750,6 +827,7 @@ function route() {
   const done = page === 'r' ? showRecipe(param)
     : page === 'cook' ? showCook(param)
       : page === 'shop' ? showShop(param)
+        : page === 'import' ? showImport()
       : page === 'new' ? showForm(null)
         : page === 'edit' ? showForm(param)
           : page === 'settings' ? showSettings()

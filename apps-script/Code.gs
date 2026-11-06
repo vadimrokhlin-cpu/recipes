@@ -36,6 +36,8 @@ function doPost(e) {
   const props = PropertiesService.getScriptProperties();
   if (!body.key || body.key !== props.getProperty('KEY')) return json_({ error: 'unauthorized' });
 
+  if (body.fetchUrl) return json_(fetchPage_(body.fetchUrl));
+
   const lock = LockService.getScriptLock();
   lock.waitLock(25000);
   try {
@@ -43,6 +45,27 @@ function doPost(e) {
   } finally {
     lock.releaseLock();
   }
+}
+
+// מביא דף מתכון והתמונה הראשית שלו. דפדפן לא יכול לקרוא אתר אחר ישירות, לכן זה נעשה כאן.
+function fetchPage_(url) {
+  if (!/^https?:\/\//i.test(url)) return { fetchError: 'bad url' };
+  const options = { muteHttpExceptions: true, followRedirects: true, headers: { 'User-Agent': 'Mozilla/5.0 (Linux; Android 14) Mobile' } };
+  const res = UrlFetchApp.fetch(url, options);
+  if (res.getResponseCode() >= 400) return { fetchError: 'http ' + res.getResponseCode() };
+  const html = res.getContentText();
+  const out = { html: html };
+  const m = /<meta[^>]+property=["']og:image["'][^>]*content=["']([^"']+)["']/i.exec(html);
+  if (m) {
+    try {
+      const img = UrlFetchApp.fetch(m[1], options);
+      const blob = img.getBlob();
+      if (img.getResponseCode() < 400 && blob.getBytes().length < 3000000) {
+        out.image = 'data:' + blob.getContentType() + ';base64,' + Utilities.base64Encode(blob.getBytes());
+      }
+    } catch (x) { /* בלי תמונה */ }
+  }
+  return out;
 }
 
 // מקבל שינויים מהמכשיר, ומחזיר את מה שהשתנה בדרייב מאז הסנכרון הקודם שלו.

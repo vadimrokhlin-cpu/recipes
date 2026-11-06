@@ -257,6 +257,101 @@ const Core = (() => {
     return h ? `${h}:${two(m)}:${two(r)}` : `${m}:${two(r)}`;
   }
 
+  // ---------- ייבוא מתכון מדף אינטרנט או מטקסט ----------
+  const INGREDIENT_HEADING = /^(ה?מרכיבים|ה?מצרכים|רכיבים|חומרים)(\s|\(|:|$)/;
+  const STEPS_HEADING = /^(הוראות הכנה|הוראות ההכנה|אופן ההכנה|אופן הכנה|דרך ההכנה|ההכנה|הכנה|שלבים|שלבי הכנה|איך מכינים)(\s|\(|:|$)/;
+  const NOTES_HEADING = /^(הערות|טיפים|אחסון|וריאציות)(\s|\(|$)/;
+  const STOP_HEADING = /^(ערכים תזונתיים|תגובות|מתכונים נוספים|עוד מתכונים|אולי יעניין|כתבו|שתפו)/;
+
+  function decodeEntities(s) {
+    const named = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', hellip: '…', ndash: '–', mdash: '–', rsquo: "'", lsquo: "'", rdquo: '"', ldquo: '"', frac12: '½', frac14: '¼', frac34: '¾' };
+    return s.replace(/&(#x?[0-9a-f]+|[a-z0-9]+);/gi, (whole, e) => {
+      if (e[0] === '#') {
+        const code = e[1].toLowerCase() === 'x' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
+        return Number.isFinite(code) ? String.fromCodePoint(code) : whole;
+      }
+      return e.toLowerCase() in named ? named[e.toLowerCase()] : whole;
+    });
+  }
+
+  const htmlText = s => decodeEntities(s.replace(/<br\s*\/?>/gi, ' ').replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').replace(/\s+([,.:;])/g, '$1').trim();
+
+  function headingKind(text) {
+    const t = text.replace(/[:：*\s]+$/, '').replace(/^[*\s]+/, '');
+    if (t.length > 45) return null;
+    if (INGREDIENT_HEADING.test(t)) return 'ingredients';
+    if (STEPS_HEADING.test(t)) return 'steps';
+    if (NOTES_HEADING.test(t)) return 'notes';
+    return STOP_HEADING.test(t) ? 'stop' : null;
+  }
+
+  // עובר על בלוקים לפי הסדר: כותרת מצרכים, רשימה, כותרת הכנה, רשימה, הערות.
+  function walkBlocks(blocks) {
+    const out = { ingredients: [], steps: [], notes: [] };
+    let state = null, listStarted = false;
+    for (const b of blocks) {
+      const kind = headingKind(b.text);
+      if (kind === 'ingredients' && state !== 'steps' && state !== 'notes') { state = 'ingredients'; continue; }
+      if (kind === 'steps' && out.ingredients.length) { state = 'steps'; listStarted = false; continue; }
+      if (kind === 'notes' && state === 'steps') { state = 'notes'; continue; }
+      if (kind === 'stop' && out.steps.length) break;
+      if (!state || !b.text) continue;
+      const isList = b.tag === 'li', subHeading = /[:：]$/.test(b.text) && b.text.length < 60;
+      if (state === 'ingredients') {
+        if (/^הערה/.test(b.text)) out.notes.push(b.text);
+        else if (!subHeading && (isList || b.text.length < 80)) out.ingredients.push(b.text);
+      } else if (state === 'steps') {
+        if (isList) { out.steps.push(b.text); listStarted = true; }
+        else if (listStarted) break;
+        else if (!subHeading && b.text.length > 15) out.steps.push(b.text);
+      } else if (isList) {
+        out.notes.push(b.text);
+      } else {
+        break;
+      }
+    }
+    return out;
+  }
+
+  // תמיד קליפות פסיליום. המקור נשאר בהערות.
+  function preferHusks(recipe) {
+    const fix = s => s.replace(/אבקת פסיליום/g, 'קליפות פסיליום').replace(/אבקת הפסיליום/g, 'קליפות הפסיליום');
+    const had = [...recipe.ingredients, ...recipe.steps].some(s => /אבקת ה?פסיליום/.test(s));
+    if (!had) return recipe;
+    return {
+      ...recipe,
+      ingredients: recipe.ingredients.map(fix),
+      steps: recipe.steps.map(fix),
+      notes: [...recipe.notes, 'במקור כתוב אבקת פסיליום, והוחלף לקליפות.'],
+    };
+  }
+
+  function parseRecipeHtml(html) {
+    const meta = name => {
+      const m = new RegExp(`<meta[^>]+property=["']${name}["'][^>]*content=["']([^"']+)["']`, 'i').exec(html);
+      return m ? decodeEntities(m[1]) : '';
+    };
+    const tag = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html);
+    const title = (meta('og:title') || (tag ? htmlText(tag[1]) : '')).replace(/\s+[-–|]\s+[^-–|]*$/, '').trim();
+    const body = html.replace(/<(script|style|noscript|svg|head)\b[\s\S]*?<\/\1>/gi, ' ');
+    const blocks = [];
+    for (const m of body.matchAll(/<(h[1-6]|p|li)\b[^>]*>([\s\S]*?)<\/\1>/gi)) {
+      blocks.push({ tag: m[1].toLowerCase(), text: htmlText(m[2]) });
+    }
+    const found = walkBlocks(blocks);
+    found.steps = found.steps.filter(s => !/לחצו (פה|כאן)/.test(s));
+    // בלי שלבים זו לא באמת קריאה של מתכון, אלא כנראה תפריט של האתר.
+    if (!found.steps.length) found.ingredients = [];
+    return preferHusks({ title, ...found });
+  }
+
+  function parseRecipeText(text) {
+    const lines = parseLines(text).map(s => s.replace(/^[-•*·]\s*/, ''));
+    const first = lines.findIndex(l => headingKind(l) === 'ingredients');
+    const title = first > 0 && lines[0].length < 70 ? lines[0] : '';
+    return preferHusks({ title, ...walkBlocks(lines.map(t => ({ tag: 'li', text: t }))) });
+  }
+
   // ---------- רשימת קניות ----------
   const TAIL_WORDS = /^(קצו[צץ]\S*|מגורד\S*|מנופ\S*|פרוס\S*|טחו[נן]\S*|מומס\S*|מופשר\S*|שטופ\S*|קלופ\S*|מסונ\S*|חתוכ\S*|רותח\S*|חמימ\S*|חמים|חם|חמה|קר|קרה|קרים|קרות|רך|רכה|רכים|רכות|טבעי|טבעית|טבעיים|טהור|טהורה|איכותי|איכותית|אמיתי|אמיתית|טרי|טריה|טרייה|טריים|בשל|בשלה|בשלים|בשלות|בשלות|גדול|גדולה|גדולים|גדולות|קטן|קטנה|קטנים|קטנות|בינוני|בינונית|בינוניים|בינוניות)$/;
   const CUT_FROM = new Set(['לפי', 'לציפוי', 'לקישוט', 'למילוי', 'לבצק', 'לזיגוג', 'למריחה', 'לשימון', 'להמסה', 'לסחיטת']);
@@ -320,13 +415,33 @@ const Core = (() => {
   // ---------- פיצול טקסט חופשי למצרכים ----------
   // מפרידים לפי שורה, לפי פסיק, ובשורה רצופה (הכתבה) גם לפי תחילת כמות חדשה.
   const COMMA = /(?<!\d),|,(?!\d)|[;،]/;                  // "1,5" הוא מספר, לא הפרדה
-  const PREPARED = /^(קצו[צץ]|מגורד|מנופ|פרוס|טחו[נן]|מומס|רך$|רכה$|רכים$|רכות$|חתו[כך]|קלו[פף]|מבושל|מרוסק|כתוש|טרי|קר$|קרה$|קרים$|חם$|חמה$|חמים$|גדול|קטנ|קטן|בינונ)/;
+
+  // מפצל לפי פסיקים, אבל לא בתוך סוגריים: "טחינה (רצוי גולמית, נוזלית)" הוא מצרך אחד.
+  function splitCommas(line) {
+    const parts = [];
+    let depth = 0, cur = '';
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (c === '(') depth++;
+      if (c === ')') depth = Math.max(0, depth - 1);
+      if (!depth && COMMA.test(line.slice(Math.max(0, i - 1), i + 2)) && /[,;،]/.test(c) && !(/\d/.test(line[i - 1] || '') && /\d/.test(line[i + 1] || ''))) {
+        parts.push(cur);
+        cur = '';
+      } else {
+        cur += c;
+      }
+    }
+    parts.push(cur);
+    return parts.map(s => s.trim()).filter(Boolean);
+  }
+  const PREPARED = /^(או |מעורבב|מיובש|מושר|מסונ|שטוף|קלוי|למריחה|לקישוט|לציפוי|למילוי|לבצק|קצו[צץ]|מגורד|מנופ|פרוס|טחו[נן]|מומס|רך$|רכה$|רכים$|רכות$|חתו[כך]|קלו[פף]|מבושל|מרוסק|כתוש|טרי|קר$|קרה$|קרים$|חם$|חמה$|חמים$|גדול|קטנ|קטן|בינונ)/;
   const NEVER_AFTER = new Set(['או', 'עד', 'עם', 'של', 'לפי', 'בערך', 'כמו', 'בלי', 'מתוך']);
   const ONE_WORDS = new Set(['אחד', 'אחת']);              // "2 תפוחים אחד גדול" הוא לא מצרך חדש
+  const NOT_AN_AMOUNT = new Set(['עונות', 'תבלינים', 'סוגי']);   // "פלפל ארבע עונות"
 
   // האם במקום j מתחיל מצרך חדש? מחזיר את המילה לשימוש (בלי ו' החיבור), או null.
   function startAt(tokens, j) {
-    if (NEVER_AFTER.has(tokens[j - 1]) || ONE_WORDS.has(tokens[j])) return null;
+    if (NEVER_AFTER.has(tokens[j - 1]) || ONE_WORDS.has(tokens[j]) || NOT_AN_AMOUNT.has(tokens[j + 1])) return null;
     if (parseAtom(tokens[j - 1]) && NEVER_AFTER.has(tokens[j - 2])) return null;   // "או 1 כף חמאה"
     const words = tokens[j].length > 1 && tokens[j][0] === 'ו' ? [tokens[j], tokens[j].slice(1)] : [tokens[j]];
     for (const word of words) {
@@ -346,7 +461,10 @@ const Core = (() => {
     while (start < tokens.length) {
       const first = readMeasure(tokens, start);
       let j = (first ? first.next : start) + 1;             // לפחות מילה אחת של שם המצרך
-      while (j < tokens.length && !startAt(tokens, j)) j++;
+      let depth = 0;
+      const open = t => (t.match(/\(/g) || []).length - (t.match(/\)/g) || []).length;
+      for (let k = start; k < j && k < tokens.length; k++) depth += open(tokens[k]);
+      while (j < tokens.length && (depth > 0 || !startAt(tokens, j))) depth += open(tokens[j++]);
       if (j < tokens.length) tokens[j] = startAt(tokens, j);
       out.push(tokens.slice(start, j).join(' '));
       start = j;
@@ -358,7 +476,7 @@ const Core = (() => {
     const out = [];
     for (const line of parseLines(text)) {
       const pieces = [];
-      for (const part of line.split(COMMA).map(s => s.trim()).filter(Boolean)) {
+      for (const part of splitCommas(line)) {
         if (pieces.length && PREPARED.test(part)) pieces[pieces.length - 1] += ', ' + part;
         else pieces.push(part);
       }
@@ -433,7 +551,7 @@ const Core = (() => {
     return out;
   }
 
-  return { parseIngredient, parseIngredients, parseSteps, parseTags, formatQty, ingredientParts, formatIngredient, matches, validRecipe, mergeBackup, applyRemote, uploadable, tombstone, batches, scaleIngredient, scaleStep, stepIngredients, findTimers, formatClock, shoppingName, DEFAULT_STAPLES, isStaple, forgotten, timeAgo };
+  return { parseIngredient, parseIngredients, parseSteps, parseTags, formatQty, ingredientParts, formatIngredient, matches, validRecipe, mergeBackup, applyRemote, uploadable, tombstone, batches, scaleIngredient, scaleStep, stepIngredients, findTimers, formatClock, parseRecipeHtml, parseRecipeText, shoppingName, DEFAULT_STAPLES, isStaple, forgotten, timeAgo };
 })();
 
 if (typeof module !== 'undefined') module.exports = Core;
