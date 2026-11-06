@@ -148,6 +148,115 @@ const Core = (() => {
     return [p.amount, p.unit, p.rest].filter(Boolean).join(' ');
   }
 
+  // ---------- התאמת כמויות ----------
+  const FRACTION_GRID = [0, 1 / 8, 1 / 4, 1 / 3, 1 / 2, 2 / 3, 3 / 4, 1];
+
+  // מעגל לכמות שאפשר למדוד במטבח: לא "137.4 גרם" ולא "1.37 כוסות".
+  function roundAmount(q, unit) {
+    const weight = unit && ['גרם', 'מ"ל'].includes(unit.one);
+    if (weight && q >= 100) return Math.round(q / 5) * 5;
+    if (q >= 10) return Math.round(q);
+    const whole = Math.floor(q), frac = q - whole;
+    const near = FRACTION_GRID.reduce((a, b) => (Math.abs(b - frac) < Math.abs(a - frac) ? b : a));
+    return Math.max(whole + near, 1 / 8);
+  }
+
+  function formatMeasure(qty, unit) {
+    const word = unit ? (qty > 1 ? unit.many : unit.one) : '';
+    return [formatQty(qty), word].filter(Boolean).join(' ');
+  }
+
+  // מעדכן גם כמות בסוגריים, כמו "150 גרם (1 1/2 כוסות) שיבולת שועל".
+  function scaleParens(item, factor) {
+    return item.replace(/\(([^()]*)\)/g, (whole, inside) => {
+      const tokens = inside.trim().split(/\s+/);
+      const m = readMeasure(tokens, 0);
+      if (!m || !m.unit) return whole;
+      const rest = tokens.slice(m.next);
+      return '(' + [formatMeasure(roundAmount(m.qty * factor, m.unit), m.unit), ...rest].join(' ') + ')';
+    });
+  }
+
+  function scaleIngredient(ing, factor) {
+    if (factor === 1 || ing.qty === null || ing.qty === undefined) return ing;
+    const has = ing.qtyMax !== null && ing.qtyMax !== undefined;
+    return {
+      ...ing,
+      qty: roundAmount(ing.qty * factor, ing.unit),
+      qtyMax: has ? roundAmount(ing.qtyMax * factor, ing.unit) : null,
+      item: scaleParens(ing.item, factor),
+    };
+  }
+
+  // מעדכן כמויות שכתובות בתוך שלב. זמנים וטמפרטורות לא משתנים, כי הם לא כתובים ביחידות מידה.
+  function scaleStep(text, factor) {
+    if (factor === 1) return text;
+    const words = [...UNIT_BY_WORD.keys()].sort((a, b) => b.length - a.length).join('|').replace(/"/g, '["״]');
+    const re = new RegExp(`(?<![\\d.,/])(\\d+(?:[.,]\\d+)?(?:/\\d+)?)(?:\\s*[-–]\\s*(\\d+(?:[.,]\\d+)?))?\\s+(${words})(?![א-ת])`, 'g');
+    return text.replace(re, (whole, a, b, word) => {
+      const unit = UNIT_BY_WORD.get(word.replace('״', '"'));
+      const low = parseAtom(a);
+      if (low === null || !unit) return whole;
+      const scaledLow = roundAmount(low * factor, unit);
+      if (b === undefined) return formatMeasure(scaledLow, unit);
+      const top = roundAmount(parseAtom(b) * factor, unit);
+      return `${formatQty(scaledLow)}-${formatMeasure(top, unit)}`;
+    });
+  }
+
+  // ---------- מצרכים בתוך שלב ----------
+  const SKIP_WORDS = new Set(['קצת', 'מעט', 'תוספות', 'אהובות', 'טיפונת', 'הרבה', 'קערה', 'גרידה', 'קליפה']);
+
+  function keyWords(item) {
+    return item.replace(/\([^)]*\)/g, ' ').replace(/[,:].*$/, ' ').split(/\s+/).filter(w => w.length > 1).slice(0, 2);
+  }
+
+  const hasWord = (text, word) => new RegExp(`(?:^|[^א-ת])(?:[והבלמשכ]{0,2})${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![א-ת])`).test(text);
+
+  // אילו מצרכים מוזכרים בשלב? מצרכים עם אותה מילה ראשונה ("קמח שקדים", "קמח קוקוס") דורשים גם את המילה השנייה.
+  function stepIngredients(ingredients, step) {
+    const firstCount = new Map();
+    ingredients.forEach(i => { const f = keyWords(i.item)[0]; firstCount.set(f, (firstCount.get(f) || 0) + 1); });
+    return ingredients.filter(i => {
+      const [first, second] = keyWords(i.item);
+      if (!first || SKIP_WORDS.has(first) || !hasWord(step, first)) return false;
+      return firstCount.get(first) === 1 || !second || hasWord(step, second);
+    });
+  }
+
+  // ---------- טיימרים ----------
+  const NUMBER = '\\d+(?:[.,]\\d+)?';
+  const NUM_WORDS = 'שתי|שלוש|ארבע|חמש|שש|שבע|שמונה|תשע|עשר|עשרים|שלושים|ארבעים|חמישים';
+  const WORD_VALUE = { 'שתי': 2, 'שלוש': 3, 'ארבע': 4, 'חמש': 5, 'שש': 6, 'שבע': 7, 'שמונה': 8, 'תשע': 9, 'עשר': 10, 'עשרים': 20, 'שלושים': 30, 'ארבעים': 40, 'חמישים': 50 };
+  const UNIT_SECONDS = [[/^שני/, 1], [/^דק/, 60], [/^שע/, 3600]];
+  const TIME_RE = new RegExp(
+    `(?<![\\d.,א-ת/])(?:[כלבו]-?)?(?:`
+    + `(${NUMBER}|${NUM_WORDS})(?:\\s*(?:[-–]|עד)\\s*(${NUMBER}|${NUM_WORDS}))?\\s*(דקות|דקה|דק'|דק׳|דק|שעות|שניות)(?![א-ת])`
+    + `|(שעה וחצי|שעה ורבע|שעתיים וחצי|שעתיים|חצי שעה|רבע שעה|שעה)(?![א-ת])`
+    + `)`, 'g');
+  const FIXED_TIMES = { 'שעה וחצי': 5400, 'שעה ורבע': 4500, 'שעתיים וחצי': 9000, 'שעתיים': 7200, 'חצי שעה': 1800, 'רבע שעה': 900, 'שעה': 3600 };
+
+  const numberValue = t => (t in WORD_VALUE ? WORD_VALUE[t] : parseFloat(t.replace(',', '.')));
+
+  // מחזיר את הזמנים שכתובים בשלב: מיקום, טקסט ושניות. בטווח מתחילים מהזמן הקצר, ובודקים מוקדם.
+  function findTimers(text) {
+    const out = [];
+    for (const m of text.matchAll(TIME_RE)) {
+      let seconds;
+      if (m[4]) seconds = FIXED_TIMES[m[4]];
+      else seconds = numberValue(m[1]) * UNIT_SECONDS.find(([re]) => re.test(m[3]))[1];
+      if (seconds > 0) out.push({ start: m.index, end: m.index + m[0].length, text: m[0], seconds });
+    }
+    return out;
+  }
+
+  function formatClock(seconds) {
+    const s = Math.max(0, Math.ceil(seconds));
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60;
+    const two = n => String(n).padStart(2, '0');
+    return h ? `${h}:${two(m)}:${two(r)}` : `${m}:${two(r)}`;
+  }
+
   const parseLines = text => String(text).split('\n').map(s => s.trim()).filter(Boolean);
 
   // ---------- פיצול טקסט חופשי למצרכים ----------
@@ -266,7 +375,7 @@ const Core = (() => {
     return out;
   }
 
-  return { parseIngredient, parseIngredients, parseSteps, parseTags, formatQty, ingredientParts, formatIngredient, matches, validRecipe, mergeBackup, applyRemote, uploadable, tombstone, batches };
+  return { parseIngredient, parseIngredients, parseSteps, parseTags, formatQty, ingredientParts, formatIngredient, matches, validRecipe, mergeBackup, applyRemote, uploadable, tombstone, batches, scaleIngredient, scaleStep, stepIngredients, findTimers, formatClock };
 })();
 
 if (typeof module !== 'undefined') module.exports = Core;

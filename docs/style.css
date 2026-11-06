@@ -40,6 +40,49 @@ h3 { margin: 24px 0 8px; font-size: 19px; color: var(--accent); }
 .source { overflow-wrap: anywhere; color: var(--accent); }
 .actions { display: flex; gap: 8px; margin-top: 28px; }
 
+/* התאמת כמויות */
+.scaler { display: flex; align-items: center; gap: 10px; margin-top: 14px; padding: 8px 12px; background: #f4eee6; border-radius: 10px; }
+.scaler .value { min-width: 64px; text-align: center; font-weight: 600; }
+.scaler button.step { width: 42px; height: 42px; border: 0; border-radius: 50%; background: var(--accent); color: #fff; font-size: 24px; line-height: 1; }
+.scaler .reset { margin-inline-start: auto; border: 0; background: none; color: var(--accent); font-size: 16px; padding: 8px; }
+.ingredients li.tappable { cursor: pointer; }
+.ingredients.scaled bdi { color: var(--accent); font-weight: 600; }
+.hint { color: var(--muted); font-size: 14px; margin: 6px 0 0; }
+a.cookBtn { display: block; margin-top: 20px; font-size: 19px; }
+
+.timerBtn { display: inline-block; margin: 0 2px; padding: 1px 9px; border: 1px solid var(--accent); border-radius: 14px; background: #fff; color: var(--accent); font: inherit; }
+.timerBtn::after { content: " ▶"; font-size: .7em; }
+
+#timers { position: fixed; right: 0; left: 0; bottom: 0; z-index: 2; display: flex; flex-direction: column; gap: 1px; padding-bottom: env(safe-area-inset-bottom); background: var(--ink); color: #fff; }
+.timer { display: flex; align-items: center; gap: 10px; padding: 9px 14px; font-size: 16px; }
+.timer .clock { font-variant-numeric: tabular-nums; font-size: 20px; font-weight: 600; }
+.timer .name { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.timer button { border: 0; background: none; color: #fff; font-size: 16px; padding: 6px 10px; }
+.timer.done { background: #a4262c; animation: pulse 1s infinite alternate; }
+@keyframes pulse { to { opacity: .7; } }
+body.hasTimers main { padding-bottom: 170px; }
+body.hasTimers #addBtn { bottom: calc(76px + env(safe-area-inset-bottom)); }
+
+/* מצב בישול */
+main.cooking { display: flex; flex-direction: column; min-height: calc(100dvh - 56px); padding-bottom: 12px; }
+.cookText { flex: 1; font-size: 27px; line-height: 1.4; padding: 10px 2px 18px; }
+.cookText .timerBtn { padding: 2px 12px; }
+.stepItems { list-style: none; margin: 0 0 12px; padding: 10px 14px; background: #f4eee6; border-radius: 10px; font-size: 19px; }
+.stepItems li { padding: 3px 0; }
+.cookAll { margin-bottom: 12px; }
+.cookAll summary { padding: 10px 2px; color: var(--accent); font-weight: 600; }
+.cookAll label { display: flex; align-items: center; gap: 10px; margin: 0; padding: 9px 2px; font-weight: 400; font-size: 18px; border-bottom: 1px solid var(--line); }
+.cookAll input { width: 24px; height: 24px; flex: none; accent-color: var(--accent); }
+.cookAll input:checked + span { color: var(--muted); text-decoration: line-through; }
+.cookNav { display: flex; gap: 10px; }
+.cookNav .btn { padding: 18px; font-size: 20px; }
+body.hasTimers main.cooking { padding-bottom: 76px; }
+
+dialog { border: 0; border-radius: 14px; width: min(92vw, 400px); padding: 18px; color: inherit; }
+dialog label { margin-top: 0; font-weight: 400; }
+dialog input { margin-top: 10px; }
+dialog .actions { margin-top: 14px; }
+
 /* טופס */
 label { display: block; margin-top: 16px; font-weight: 600; font-size: 16px; }
 label small { font-weight: 400; color: var(--muted); }

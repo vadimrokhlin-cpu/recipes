@@ -48,6 +48,7 @@ const CFG_KEY = 'recipes-cfg', SYNC_KEY = 'recipes-sync';
 const syncState = { running: false, again: false, timer: null, error: '' };
 
 const readJson = key => { try { return JSON.parse(localStorage.getItem(key)); } catch (e) { return null; } };
+const readSession = key => { try { return JSON.parse(sessionStorage.getItem(key)); } catch (e) { return null; } };
 const config = () => readJson(CFG_KEY);
 const syncInfo = () => readJson(SYNC_KEY) || { since: 0, lastOk: 0 };
 
@@ -195,6 +196,78 @@ async function showHome() {
   paint();
 }
 
+// ---------- התאמת כמויות ----------
+// נשמר לכל מתכון רק עד סגירת האפליקציה, כדי שההתאמה תישאר גם במצב בישול.
+const factorKey = id => `recipes-factor-${id}`;
+const getFactor = id => +sessionStorage.getItem(factorKey(id)) || 1;
+const setFactor = (id, f) => sessionStorage.setItem(factorKey(id), String(f));
+
+function parseAmount(text) {
+  const parsed = Core.parseIngredient(`${String(text).trim().replace(',', '.')} x`);
+  return parsed.qty > 0 ? parsed.qty : null;
+}
+
+function askAmount(label, value) {
+  const dlg = $('amountDialog'), input = $('amountInput');
+  $('amountLabel').textContent = label;
+  input.value = value;
+  dlg.returnValue = '';
+  dlg.showModal();
+  input.select();
+  return new Promise(resolve => {
+    dlg.onclose = () => resolve(dlg.returnValue === 'ok' ? parseAmount(input.value) : null);
+  });
+}
+
+function stepHtml(text, title) {
+  let html = '', at = 0;
+  for (const t of Core.findTimers(text)) {
+    html += esc(text.slice(at, t.start))
+      + `<button type="button" class="timerBtn" data-seconds="${t.seconds}" data-label="${esc(t.text)}" data-title="${esc(title)}">${esc(t.text)}</button>`;
+    at = t.end;
+  }
+  return html + esc(text.slice(at));
+}
+
+function paintScaler(r) {
+  const f = getFactor(r.id), box = $('scaler');
+  const servings = r.servings ? roundServings(r.servings * f) : null;
+  box.innerHTML = `
+    <button class="step" data-delta="-1" aria-label="פחות">−</button>
+    <span class="value">${servings ? `${servings} מנות` : `פי ${esc(Core.formatQty(f))}`}</span>
+    <button class="step" data-delta="1" aria-label="יותר">+</button>
+    ${f !== 1 ? '<button class="reset">איפוס</button>' : ''}`;
+  const list = view.querySelector('.ingredients');
+  list.classList.toggle('scaled', f !== 1);
+  list.innerHTML = r.ingredients.map((i, n) => `<li data-n="${n}" class="${i.qty === null ? '' : 'tappable'}">${ingredientHtml(Core.scaleIngredient(i, f))}</li>`).join('');
+  view.querySelector('.steps').innerHTML = r.steps.map(s => `<li>${stepHtml(Core.scaleStep(s, f), r.title)}</li>`).join('');
+}
+
+const roundServings = s => Math.round(s * 2) / 2;
+
+function bindScaler(r) {
+  const repaint = f => { setFactor(r.id, f); paintScaler(r); };
+  $('scaler').onclick = e => {
+    const f = getFactor(r.id);
+    if (e.target.classList.contains('reset')) { repaint(1); return; }
+    const delta = +e.target.dataset.delta;
+    if (!delta) return;
+    if (r.servings) repaint(Math.max(1, roundServings(r.servings * f) + delta) / r.servings);
+    else repaint(Math.max(0.5, Math.round((f + delta * 0.5) * 2) / 2));
+  };
+  view.querySelector('.ingredients').onclick = async e => {
+    const li = e.target.closest('li');
+    if (!li) return;
+    const ing = r.ingredients[+li.dataset.n];
+    if (ing.qty === null) return;
+    const shown = Core.scaleIngredient(ing, getFactor(r.id));
+    const p = Core.ingredientParts(shown);
+    const name = ing.item.replace(/\([^)]*\)/g, ' ').replace(/\s+/g, ' ').trim();
+    const amount = await askAmount(`כמה ${name} יש לך? (${p.unit || 'יחידות'})`, Core.formatQty(shown.qty));
+    if (amount) repaint(amount / ing.qty);
+  };
+}
+
 // ---------- מתכון ----------
 async function showRecipe(id) {
   const r = await getRecipe(id);
@@ -205,22 +278,162 @@ async function showRecipe(id) {
     ${r.image ? `<img class="hero" src="${esc(r.image)}" alt="">` : ''}
     <h2>${esc(r.title)}</h2>
     <div class="meta">${esc(metaLine(r))}</div>
+    <a class="btn cookBtn" href="#/cook/${encodeURIComponent(r.id)}">התחלת בישול</a>
     <h3>מצרכים</h3>
-    <ul class="ingredients">${r.ingredients.map(i => `<li>${ingredientHtml(i)}</li>`).join('')}</ul>
+    <div class="scaler" id="scaler"></div>
+    <ul class="ingredients"></ul>
+    <p class="hint">לוחצים על מצרך כדי להתאים הכל לפי מה שיש לך.</p>
     <h3>הכנה</h3>
-    <ol class="steps">${r.steps.map(s => `<li>${esc(s)}</li>`).join('')}</ol>
+    <ol class="steps"></ol>
     ${r.notes ? `<h3>הערות</h3><div class="notes">${esc(r.notes)}</div>` : ''}
     ${source ? `<h3>מקור</h3><a class="source" href="${esc(source)}" target="_blank" rel="noopener">${esc(source)}</a>` : ''}
     <div class="actions">
       <a class="btn secondary" href="#/edit/${encodeURIComponent(r.id)}">עריכה</a>
       <button class="btn danger" id="del">מחיקה</button>
     </div>`;
+  paintScaler(r);
+  bindScaler(r);
   $('del').onclick = async () => {
     if (!confirm(`למחוק את "${r.title}"? אי אפשר לבטל.`)) return;
     await deleteRecipe(r);
     toast('המתכון נמחק');
     goHome();
   };
+}
+
+// ---------- טיימרים ----------
+const TIMERS_KEY = 'recipes-timers';
+let timers = readJson(TIMERS_KEY) || [];
+let audioCtx = null, lastRing = 0;
+
+const saveTimers = () => localStorage.setItem(TIMERS_KEY, JSON.stringify(timers));
+
+function startTimer(seconds, label, title) {
+  try {               // צליל מותר רק אחרי לחיצה של המשתמש, לכן פותחים אותו כאן
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    audioCtx.resume();
+  } catch (e) { /* בלי צליל, הרטט וההבהוב נשארים */ }
+  timers.push({ id: newId(), label, title, endAt: Date.now() + seconds * 1000 });
+  saveTimers();
+  paintTimers();
+}
+
+function beep() {
+  if (!audioCtx || audioCtx.state !== 'running') return;
+  [0, 0.25, 0.5].forEach(at => {
+    const osc = audioCtx.createOscillator(), gain = audioCtx.createGain();
+    osc.frequency.value = 880;
+    gain.gain.value = 0.25;
+    osc.connect(gain).connect(audioCtx.destination);
+    osc.start(audioCtx.currentTime + at);
+    osc.stop(audioCtx.currentTime + at + 0.15);
+  });
+}
+
+function paintTimers() {
+  const box = $('timers'), now = Date.now();
+  box.hidden = !timers.length;
+  document.body.classList.toggle('hasTimers', timers.length > 0);
+  box.innerHTML = timers.map(t => {
+    const left = (t.endAt - now) / 1000;
+    return `<div class="timer${left <= 0 ? ' done' : ''}">
+      <span class="clock">${left <= 0 ? 'הזמן נגמר' : Core.formatClock(left)}</span>
+      <span class="name">${esc(t.label)} · ${esc(t.title)}</span>
+      <button data-id="${esc(t.id)}">${left <= 0 ? 'סגירה' : 'ביטול'}</button>
+    </div>`;
+  }).join('');
+}
+
+function tickTimers() {
+  if (!timers.length) return;
+  paintTimers();
+  if (timers.some(t => t.endAt <= Date.now()) && Date.now() - lastRing > 2000) {
+    lastRing = Date.now();
+    beep();
+    if (navigator.vibrate) navigator.vibrate([300, 150, 300]);
+  }
+}
+
+// ---------- מצב בישול ----------
+let wakeLock = null, cooking = false;
+
+async function keepAwake() {
+  if (!cooking || wakeLock || !('wakeLock' in navigator) || document.hidden) return;
+  try {
+    wakeLock = await navigator.wakeLock.request('screen');
+    wakeLock.addEventListener('release', () => { wakeLock = null; });
+  } catch (e) { /* המכשיר סירב, למשל בסוללה נמוכה: ממשיכים בלי */ }
+}
+
+function stopCooking() {
+  cooking = false;
+  view.classList.remove('cooking');
+  if (wakeLock) wakeLock.release();
+}
+
+const cookKey = id => `recipes-cook-${id}`;
+
+async function showCook(id) {
+  const r = await getRecipe(id);
+  if (!r) { goHome(); return; }
+  cooking = true;
+  keepAwake();
+  view.classList.add('cooking');
+  const f = getFactor(id);
+  const state = readSession(cookKey(id)) || { step: 0, checked: [] };
+  const toRecipe = () => { location.hash = `#/r/${encodeURIComponent(id)}`; };
+  const items = r.ingredients.map(i => Core.scaleIngredient(i, f));
+
+  const paint = () => {
+    const step = Math.min(state.step, r.steps.length - 1), last = step === r.steps.length - 1;
+    sessionStorage.setItem(cookKey(id), JSON.stringify(state));
+    chrome(`שלב ${step + 1} מתוך ${r.steps.length}`, { back: toRecipe });
+    const here = Core.stepIngredients(items, r.steps[step]);
+    const open = view.querySelector('.cookAll') && view.querySelector('.cookAll').open;
+    view.innerHTML = `
+      <div class="cookText">${stepHtml(Core.scaleStep(r.steps[step], f), r.title)}</div>
+      ${here.length ? `<ul class="stepItems">${here.map(i => `<li>${ingredientHtml(i)}</li>`).join('')}</ul>` : ''}
+      <details class="cookAll"${open ? ' open' : ''}>
+        <summary>כל המצרכים</summary>
+        ${items.map((i, n) => `<label><input type="checkbox" data-n="${n}"${state.checked.includes(n) ? ' checked' : ''}><span>${ingredientHtml(i)}</span></label>`).join('')}
+      </details>
+      <div class="cookNav">
+        <button class="btn secondary" id="prev"${step ? '' : ' disabled'}>הקודם</button>
+        <button class="btn" id="next">${last ? 'סיימתי' : 'הבא'}</button>
+      </div>`;
+    $('prev').onclick = () => go(-1);
+    $('next').onclick = () => (last ? finish() : go(1));
+  };
+  const go = d => {
+    state.step = Math.max(0, Math.min(r.steps.length - 1, state.step + d));
+    paint();
+  };
+  const finish = async () => {
+    if (confirm(`בישלת את "${r.title}"?`)) {
+      const now = Date.now();
+      await saveRecipes([{ ...r, lastCookedAt: now, cookedCount: (r.cookedCount || 0) + 1, updatedAt: now }]);
+      toast('נשמר. בתיאבון!');
+    }
+    sessionStorage.removeItem(cookKey(id));
+    toRecipe();
+  };
+
+  view.onchange = e => {
+    if (e.target.type !== 'checkbox') return;
+    const n = +e.target.dataset.n;
+    state.checked = e.target.checked ? [...state.checked, n] : state.checked.filter(x => x !== n);
+    sessionStorage.setItem(cookKey(id), JSON.stringify(state));
+  };
+  // בעברית הדפדוף הוא מימין לשמאל: החלקה ימינה מעבירה לשלב הבא.
+  let touchX = null;
+  view.ontouchstart = e => { touchX = e.touches[0].clientX; };
+  view.ontouchend = e => {
+    if (touchX === null) return;
+    const dx = e.changedTouches[0].clientX - touchX;
+    touchX = null;
+    if (Math.abs(dx) > 70) go(dx > 0 ? 1 : -1);
+  };
+  paint();
 }
 
 // ---------- הוספה ועריכה ----------
@@ -406,18 +619,38 @@ async function showSettings() {
 function route() {
   const [, page, id] = location.hash.split('/');
   const param = id ? decodeURIComponent(id) : null;
+  stopCooking();
+  view.onchange = view.ontouchstart = view.ontouchend = null;
   const done = page === 'r' ? showRecipe(param)
-    : page === 'new' ? showForm(null)
-      : page === 'edit' ? showForm(param)
-        : page === 'settings' ? showSettings()
-          : showHome();
+    : page === 'cook' ? showCook(param)
+      : page === 'new' ? showForm(null)
+        : page === 'edit' ? showForm(param)
+          : page === 'settings' ? showSettings()
+            : showHome();
   done.catch(err => { console.error(err); view.innerHTML = `<p class="empty">משהו השתבש: ${esc(err.message)}</p>`; });
 }
 
 $('menuBtn').onclick = () => { location.hash = '#/settings'; };
 window.addEventListener('hashchange', route);
 window.addEventListener('online', sync);
-document.addEventListener('visibilitychange', () => { if (!document.hidden) sync(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return;
+  sync();
+  keepAwake();
+  tickTimers();
+});
+document.addEventListener('click', e => {
+  const t = e.target.closest('.timerBtn');
+  if (t) startTimer(+t.dataset.seconds, t.dataset.label, t.dataset.title);
+});
+$('timers').onclick = e => {
+  if (!e.target.dataset.id) return;
+  timers = timers.filter(t => t.id !== e.target.dataset.id);
+  saveTimers();
+  paintTimers();
+};
+setInterval(tickTimers, 1000);
+paintTimers();
 
 connectFromLink().then(connected => {
   if (connected) toast('מחובר לחשבון Google');
