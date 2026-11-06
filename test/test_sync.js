@@ -33,6 +33,7 @@ const sandbox = {
   UrlFetchApp: {
     fetch(url) {
       fetched.push(url);
+      if (url.includes('throws')) throw new Error('no permission');
       const page = '<meta property="og:image" content="https://x.test/a.jpg"><h2>מצרכים</h2>';
       return {
         getResponseCode: () => (url.includes('blocked') ? 403 : 200),
@@ -134,6 +135,7 @@ assert.ok(call({ key: 'wrong', fetchUrl: 'https://x.test/r' }).error);
 assert.strictEqual(fetched.length, 0, 'no fetch without key');
 assert.strictEqual(call({ key: 'secret', fetchUrl: 'file:///etc/passwd' }).fetchError, 'bad url');
 assert.strictEqual(call({ key: 'secret', fetchUrl: 'https://x.test/blocked' }).fetchError, 'http 403');
+assert.strictEqual(call({ key: 'secret', fetchUrl: 'https://x.test/throws' }).fetchError, 'no permission', 'failure reaches the app');
 const page = call({ key: 'secret', fetchUrl: 'https://x.test/r' });
 assert.ok(page.html.includes('מצרכים'));
 assert.strictEqual(page.image, 'data:image/jpeg;base64,QUJD');

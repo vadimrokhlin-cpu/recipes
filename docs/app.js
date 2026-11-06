@@ -506,7 +506,7 @@ async function showImport() {
       $('fetchBtn').textContent = 'מביא...';
       try {
         const res = await postSync(cfg, { fetchUrl: url });
-        if (res.fetchError) throw new Error('blocked');
+        if (res.fetchError) throw new Error(/^http 4/.test(res.fetchError) ? 'blocked' : res.fetchError);
         if (!res.html) throw new Error('old server');
         const parsed = Core.parseRecipeHtml(res.html);
         if (!parsed.ingredients.length) throw new Error('not found');
@@ -517,7 +517,7 @@ async function showImport() {
           blocked: 'האתר חסם את הגישה. אפשר להעתיק את הטקסט ולהדביק למטה.',
           'old server': 'צריך לעדכן קודם את הסקריפט ב-Google.',
           'not found': 'לא מצאתי מתכון בדף. אפשר להעתיק את הטקסט ולהדביק למטה.',
-        }[err.message] || 'הייבוא נכשל. בדוק שיש אינטרנט ונסה שוב.';
+        }[err.message] || `הייבוא נכשל: ${err.message}`;
         toast(message);
       }
       $('fetchBtn').disabled = false;

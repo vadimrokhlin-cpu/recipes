@@ -15,6 +15,9 @@ function setup() {
   if (!props.getProperty('FOLDER_ID')) {
     props.setProperty('FOLDER_ID', DriveApp.createFolder(FOLDER_NAME).getId());
   }
+  // גם מבקש את ההרשאה לגשת לאינטרנט, וגם מראה אם זה באמת עובד
+  const test = fetchPage_('https://omermiller.co.il/yogurt_brioche_rolls/');
+  Logger.log(test.fetchError ? 'הבאת דף נכשלה: ' + test.fetchError : 'הבאת דף עובדת, ' + test.html.length + ' תווים.');
   Logger.log('הכל מוכן. עכשיו פורסים (Deploy) ומריצים showLink.');
 }
 
@@ -51,7 +54,12 @@ function doPost(e) {
 function fetchPage_(url) {
   if (!/^https?:\/\//i.test(url)) return { fetchError: 'bad url' };
   const options = { muteHttpExceptions: true, followRedirects: true, headers: { 'User-Agent': 'Mozilla/5.0 (Linux; Android 14) Mobile' } };
-  const res = UrlFetchApp.fetch(url, options);
+  let res;
+  try {
+    res = UrlFetchApp.fetch(url, options);
+  } catch (x) {
+    return { fetchError: String(x.message || x).slice(0, 200) };   // בלי זה הדפדפן מקבל דף שגיאה ולא הודעה
+  }
   if (res.getResponseCode() >= 400) return { fetchError: 'http ' + res.getResponseCode() };
   const html = res.getContentText();
   const out = { html: html };
