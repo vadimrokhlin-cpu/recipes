@@ -231,11 +231,11 @@ function askAmount(label, value) {
   });
 }
 
-function stepHtml(text, title) {
+function stepHtml(text, recipe, stepIndex) {
   let html = '', at = 0;
   for (const t of Core.findTimers(text)) {
     html += esc(text.slice(at, t.start))
-      + `<button type="button" class="timerBtn" data-seconds="${t.seconds}" data-label="${esc(t.text)}" data-title="${esc(title)}">${esc(t.text)}</button>`;
+      + `<button type="button" class="timerBtn" data-seconds="${t.seconds}" data-label="${esc(t.text)}" data-title="${esc(recipe.title)}" data-recipe="${esc(recipe.id)}" data-step="${stepIndex}">${esc(t.text)}</button>`;
     at = t.end;
   }
   return html + esc(text.slice(at));
@@ -252,7 +252,7 @@ function paintScaler(r) {
   const list = view.querySelector('.ingredients');
   list.classList.toggle('scaled', f !== 1);
   list.innerHTML = r.ingredients.map((i, n) => `<li data-n="${n}" class="${i.qty === null ? '' : 'tappable'}">${ingredientHtml(Core.scaleIngredient(i, f))}</li>`).join('');
-  view.querySelector('.steps').innerHTML = r.steps.map(s => `<li>${stepHtml(Core.scaleStep(s, f), r.title)}</li>`).join('');
+  view.querySelector('.steps').innerHTML = r.steps.map((s, n) => `<li>${stepHtml(Core.scaleStep(s, f), r, n)}</li>`).join('');
 }
 
 const roundServings = s => Math.round(s * 2) / 2;
@@ -330,14 +330,77 @@ let audioCtx = null, lastRing = 0;
 
 const saveTimers = () => localStorage.setItem(TIMERS_KEY, JSON.stringify(timers));
 
-function startTimer(seconds, label, title) {
+// צליל נוצר כאן בקוד, כך שאין קובץ שצריך להוריד.
+function wavUrl(seconds, sample) {
+  const rate = 8000, count = Math.floor(rate * seconds);
+  const bytes = new DataView(new ArrayBuffer(44 + count * 2));
+  const text = (at, s) => [...s].forEach((c, i) => bytes.setUint8(at + i, c.charCodeAt(0)));
+  text(0, 'RIFF'); bytes.setUint32(4, 36 + count * 2, true); text(8, 'WAVEfmt ');
+  bytes.setUint32(16, 16, true); bytes.setUint16(20, 1, true); bytes.setUint16(22, 1, true);
+  bytes.setUint32(24, rate, true); bytes.setUint32(28, rate * 2, true);
+  bytes.setUint16(32, 2, true); bytes.setUint16(34, 16, true);
+  text(36, 'data'); bytes.setUint32(40, count * 2, true);
+  for (let i = 0; i < count; i++) bytes.setInt16(44 + i * 2, sample(i / rate) * 32767, true);
+  const raw = Array.from(new Uint8Array(bytes.buffer), b => String.fromCharCode(b)).join('');
+  return 'data:audio/wav;base64,' + btoa(raw);
+}
+
+// צליל כמעט לא נשמע: כל עוד הוא מתנגן, Android לא מקפיא את האפליקציה כשיוצאים ממנה.
+const QUIET_SOUND = () => wavUrl(1, t => (Math.floor(t * 8000) % 2 ? 0.0004 : -0.0004));
+const ALARM_SOUND = () => wavUrl(1.6, t => (t % 0.4 < 0.22 ? Math.sin(2 * Math.PI * 880 * t) * 0.9 : 0));
+let player = null, playerMode = '';
+
+function setSound(mode) {
+  if (!mode) {
+    if (player) player.pause();
+    playerMode = '';
+    return;
+  }
+  player = player || Object.assign(new Audio(), { loop: true });
+  if (playerMode !== mode) {
+    player.src = mode === 'alarm' ? ALARM_SOUND() : QUIET_SOUND();
+    playerMode = mode;
+  }
+  if (player.paused) player.play().catch(() => { /* עוד אין לחיצה של המשתמש */ });
+}
+
+function syncSound() {
+  const done = timers.some(t => t.endAt <= Date.now());
+  setSound(done ? 'alarm' : timers.length ? 'quiet' : '');
+  if ('mediaSession' in navigator && window.MediaMetadata && timers.length) {
+    navigator.mediaSession.metadata = new MediaMetadata({ title: done ? 'הזמן נגמר' : 'טיימר פועל', artist: timers[0].title || 'מתכונים' });
+  }
+}
+
+const timerHash = t => `#/cook/${encodeURIComponent(t.recipeId)}/${t.step}`;
+
+async function notifyTimer(t) {
+  if (!document.hidden || !('Notification' in window) || Notification.permission !== 'granted' || !('serviceWorker' in navigator)) return;
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    await reg.showNotification('הזמן נגמר', {
+      body: `${t.label} · ${t.title}`, tag: t.id, renotify: true, requireInteraction: true,
+      vibrate: [400, 200, 400, 200, 400], icon: 'icon-192.png', data: { hash: t.recipeId ? timerHash(t) : '#/' },
+    });
+  } catch (e) { /* הצלצול נשאר */ }
+}
+
+async function clearNotification(id) {
+  if (!('serviceWorker' in navigator) || !navigator.serviceWorker.controller) return;
+  const reg = await navigator.serviceWorker.ready;
+  (await reg.getNotifications({ tag: id })).forEach(n => n.close());
+}
+
+function startTimer(seconds, label, title, recipeId, step) {
   try {               // צליל מותר רק אחרי לחיצה של המשתמש, לכן פותחים אותו כאן
     audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
     audioCtx.resume();
   } catch (e) { /* בלי צליל, הרטט וההבהוב נשארים */ }
-  timers.push({ id: newId(), label, title, endAt: Date.now() + seconds * 1000 });
+  if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission();
+  timers.push({ id: newId(), label, title, recipeId, step, endAt: Date.now() + seconds * 1000 });
   saveTimers();
   paintTimers();
+  syncSound();
 }
 
 function beep() {
@@ -358,9 +421,9 @@ function paintTimers() {
   document.body.classList.toggle('hasTimers', timers.length > 0);
   box.innerHTML = timers.map(t => {
     const left = (t.endAt - now) / 1000;
-    return `<div class="timer${left <= 0 ? ' done' : ''}">
+    return `<div class="timer${left <= 0 ? ' done' : ''}${t.recipeId ? ' canOpen' : ''}" data-open="${esc(t.id)}">
       <span class="clock">${left <= 0 ? 'הזמן נגמר' : Core.formatClock(left)}</span>
-      <span class="name">${esc(t.label)} · ${esc(t.title)}</span>
+      <span class="name">${esc(t.label)}<small>${esc(t.title)}</small></span>
       <button data-id="${esc(t.id)}">${left <= 0 ? 'סגירה' : 'ביטול'}</button>
     </div>`;
   }).join('');
@@ -369,9 +432,15 @@ function paintTimers() {
 function tickTimers() {
   if (!timers.length) return;
   paintTimers();
+  syncSound();
+  timers.filter(t => t.endAt <= Date.now() && !t.notified).forEach(t => {
+    t.notified = true;
+    saveTimers();
+    notifyTimer(t);
+  });
   if (timers.some(t => t.endAt <= Date.now()) && Date.now() - lastRing > 2000) {
     lastRing = Date.now();
-    beep();
+    if (!player || player.paused) beep();
     if (navigator.vibrate) navigator.vibrate([300, 150, 300]);
   }
 }
@@ -400,7 +469,7 @@ function markCooked(r) {
   return saveRecipes([{ ...r, lastCookedAt: now, cookedCount: (r.cookedCount || 0) + 1, updatedAt: now }]);
 }
 
-async function showCook(id) {
+async function showCook(id, stepFromTimer) {
   const r = await getRecipe(id);
   if (!r) { goHome(); return; }
   cooking = true;
@@ -408,6 +477,10 @@ async function showCook(id) {
   view.classList.add('cooking');
   const f = getFactor(id);
   const state = readSession(cookKey(id)) || { step: 0, checked: [] };
+  if (stepFromTimer !== undefined && stepFromTimer !== '') {
+    state.step = Math.max(0, +stepFromTimer || 0);
+    history.replaceState(null, '', `#/cook/${encodeURIComponent(id)}`);
+  }
   const toRecipe = () => { location.hash = `#/r/${encodeURIComponent(id)}`; };
   const items = r.ingredients.map(i => Core.scaleIngredient(i, f));
 
@@ -418,7 +491,7 @@ async function showCook(id) {
     const here = Core.stepIngredients(items, r.steps[step]);
     const open = view.querySelector('.cookAll') && view.querySelector('.cookAll').open;
     view.innerHTML = `
-      <div class="cookText">${stepHtml(Core.scaleStep(r.steps[step], f), r.title)}</div>
+      <div class="cookText">${stepHtml(Core.scaleStep(r.steps[step], f), r, step)}</div>
       ${here.length ? `<ul class="stepItems">${here.map(i => `<li>${ingredientHtml(i)}</li>`).join('')}</ul>` : ''}
       <details class="cookAll"${open ? ' open' : ''}>
         <summary>כל המצרכים</summary>
@@ -820,12 +893,12 @@ async function showSettings() {
 
 // ---------- ניווט ----------
 function route() {
-  const [, page, id] = location.hash.split('/');
+  const [, page, id, extra] = location.hash.split('/');
   const param = id ? decodeURIComponent(id) : null;
   stopCooking();
   view.onchange = view.ontouchstart = view.ontouchend = null;
   const done = page === 'r' ? showRecipe(param)
-    : page === 'cook' ? showCook(param)
+    : page === 'cook' ? showCook(param, extra)
       : page === 'shop' ? showShop(param)
         : page === 'import' ? showImport()
       : page === 'new' ? showForm(null)
@@ -846,16 +919,33 @@ document.addEventListener('visibilitychange', () => {
 });
 document.addEventListener('click', e => {
   const t = e.target.closest('.timerBtn');
-  if (t) startTimer(+t.dataset.seconds, t.dataset.label, t.dataset.title);
+  if (t) startTimer(+t.dataset.seconds, t.dataset.label, t.dataset.title, t.dataset.recipe, +t.dataset.step);
+  else if (timers.length) syncSound();     // אחרי פתיחה מחדש, הצליל חוזר בלחיצה הראשונה
 });
 $('timers').onclick = e => {
-  if (!e.target.dataset.id) return;
-  timers = timers.filter(t => t.id !== e.target.dataset.id);
-  saveTimers();
-  paintTimers();
+  const id = e.target.dataset.id;
+  if (id) {
+    timers = timers.filter(t => t.id !== id);
+    saveTimers();
+    paintTimers();
+    syncSound();
+    clearNotification(id);
+    return;
+  }
+  const row = e.target.closest('.timer');
+  const timer = row && timers.find(t => t.id === row.dataset.open);
+  if (timer && timer.recipeId) {
+    const target = timerHash(timer);
+    if (location.hash === target) route();
+    else location.hash = target;
+  }
 };
+navigator.serviceWorker && navigator.serviceWorker.addEventListener('message', e => {
+  if (e.data && e.data.openHash) location.hash = e.data.openHash;
+});
 setInterval(tickTimers, 1000);
 paintTimers();
+syncSound();
 
 connectFromLink().then(connected => {
   if (connected) toast('מחובר לחשבון Google');
