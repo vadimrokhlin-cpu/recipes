@@ -90,6 +90,9 @@ body.hasTimers #addBtn { bottom: calc(76px + env(safe-area-inset-bottom)); }
 select { display: block; width: 100%; margin-top: 4px; padding: 11px; font: inherit; color: inherit; background: #fff; border: 1px solid var(--line); border-radius: 10px; }
 .card textarea { min-height: 70px; }
 
+/* נגיעה כאן לא צריכה לפתוח חיפוש של Chrome (Touch to Search) */
+.timer, .ingredients li.tappable, .cookText, .stepItems, .cookAll, .cookNav { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+
 /* מצב בישול */
 main.cooking { display: flex; flex-direction: column; min-height: calc(100dvh - 56px); padding-bottom: 12px; }
 .cookText { flex: 1; font-size: 27px; line-height: 1.4; padding: 10px 2px 18px; }

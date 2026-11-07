@@ -251,7 +251,7 @@ function paintScaler(r) {
     ${f !== 1 ? '<button class="reset">איפוס</button>' : ''}`;
   const list = view.querySelector('.ingredients');
   list.classList.toggle('scaled', f !== 1);
-  list.innerHTML = r.ingredients.map((i, n) => `<li data-n="${n}" class="${i.qty === null ? '' : 'tappable'}">${ingredientHtml(Core.scaleIngredient(i, f))}</li>`).join('');
+  list.innerHTML = r.ingredients.map((i, n) => `<li data-n="${n}"${i.qty === null ? '' : ' class="tappable" role="button" tabindex="0"'}>${ingredientHtml(Core.scaleIngredient(i, f))}</li>`).join('');
   view.querySelector('.steps').innerHTML = r.steps.map((s, n) => `<li>${stepHtml(Core.scaleStep(s, f), r, n)}</li>`).join('');
 }
 
@@ -421,7 +421,7 @@ function paintTimers() {
   document.body.classList.toggle('hasTimers', timers.length > 0);
   box.innerHTML = timers.map(t => {
     const left = (t.endAt - now) / 1000;
-    return `<div class="timer${left <= 0 ? ' done' : ''}${t.recipeId ? ' canOpen' : ''}" data-open="${esc(t.id)}">
+    return `<div class="timer${left <= 0 ? ' done' : ''}${t.recipeId ? ' canOpen' : ''}" data-open="${esc(t.id)}" role="button" tabindex="0">
       <span class="clock">${left <= 0 ? 'הזמן נגמר' : Core.formatClock(left)}</span>
       <span class="name">${esc(t.label)}<small>${esc(t.title)}</small></span>
       <button data-id="${esc(t.id)}">${left <= 0 ? 'סגירה' : 'ביטול'}</button>
