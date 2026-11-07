@@ -178,7 +178,8 @@ assert.ok(C.isStaple('פלפל שחור גרוס', ['פלפל שחור']));
 assert.ok(!C.isStaple('פלפל אדום', ['פלפל שחור']));
 
 const DAY = 864e5, NOW = 2e12;
-const rr = (id, lastCookedAt, tags = []) => ({ id, title: id, tags, lastCookedAt });
+const rr = (id, lastCookedAt, tags = []) => ({ id, title: id, tags, lastCookedAt, ingredients: [{ item: 'x' }] });
+n++; assert.deepStrictEqual(C.forgotten([{ id: 'rules', title: 'עקרונות', tags: [], ingredients: [] }], 2e12), [], 'rules card not suggested');
 n += 8;
 const picks = (list, c) => C.forgotten(list, NOW, c).map(x => x.id);
 assert.deepStrictEqual(picks([rr('a', NOW - 90 * DAY), rr('b', null)]), ['a', 'b']);

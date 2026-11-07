@@ -2,7 +2,7 @@
 // הדומיין משותף עם אפליקציית הקניות: לכן מוחקים כאן רק מטמונים עם הקידומת שלנו.
 // כשמטמון חסר (למשל אם אפליקציה אחרת מחקה אותו), הקבצים נטענים מהרשת ונשמרים מחדש.
 const PREFIX = 'recipes-';
-const CACHE = PREFIX + 'v9';
+const CACHE = PREFIX + 'v10';
 const FILES = ['./', 'index.html', 'style.css', 'core.js', 'app.js', 'manifest.json', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', e => {

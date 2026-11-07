@@ -384,7 +384,7 @@ const Core = (() => {
   // בוחר מתכונים להזכיר. קודם מה שבושל ונשכח, אחר כך מה שעוד לא בושל. מתחלף כל יום.
   function forgotten(recipes, now, count = 2) {
     const today = Math.floor(now / DAY);
-    const pool = recipes.filter(r => !r.deleted && !(r.tags || []).includes('לבדיקה'));
+    const pool = recipes.filter(r => !r.deleted && (r.ingredients || []).length && !(r.tags || []).includes('לבדיקה'));   // כרטיס עקרונות בלי מצרכים הוא לא מתכון
     const old = pool.filter(r => r.lastCookedAt && now - r.lastCookedAt >= FORGOTTEN_AFTER_DAYS * DAY);
     const never = pool.filter(r => !r.lastCookedAt);
     const shuffled = list => [...list].sort((a, b) => seededOrder(a.id, today) - seededOrder(b.id, today));
